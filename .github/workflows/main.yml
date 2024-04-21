@@ -19,7 +19,7 @@ jobs:
           override: true
 
       - name: Cache cargo registry
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         continue-on-error: false
         with:
           path: |
@@ -34,7 +34,7 @@ jobs:
         run: |
           pip install cargo-lambda
           cargo lambda build --release
-          cargo lambda deploy --enable-function-url
+          cargo lambda deploy accept-payments --enable-function-url
         env:
           AWS_DEFAULT_REGION: us-west-1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
