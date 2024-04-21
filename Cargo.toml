@@ -14,7 +14,7 @@ serde_json = "1.0"
 tokio = { version = "1", features = ["macros"] }
 
 [profile.release]
-strip = false
-lto = "fat"
 codegen-units = 16
-panic = "unwind"
+
+[package.metadata.lambda.deploy]
+tags = { "project" = "accept-payments" }
