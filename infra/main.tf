@@ -14,6 +14,11 @@ resource "aws_iam_policy" "accept-payment-lambda-service-policy" {
       {
         Effect = "Allow"
         Action = [
+          "iam:CreateRole",
+          "iam:AttachRolePolicy",
+          "iam:PassRole",
+          "iam:PutRolePolicy",
+          "iam:UpdateAssumeRolePolicy",
           "lambda:GetFunction",
           "lambda:GetLayerVersion",
           "lambda:CreateFunction",
@@ -24,6 +29,7 @@ resource "aws_iam_policy" "accept-payment-lambda-service-policy" {
         ]
         Resource = [
           "arn:aws:lambda:us-west-1:735853783919:function:accept-payments",
+          "arn:aws:iam::735853783919:role/cargo-lambda-role-*"
         ]
       }
     ]

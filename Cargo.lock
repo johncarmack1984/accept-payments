@@ -3,6 +3,20 @@
 version = 3
 
 [[package]]
+name = "accept-payments"
+version = "0.1.0"
+dependencies = [
+ "async-stripe",
+ "axum",
+ "lambda_http",
+ "lambda_runtime",
+ "openssl",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -629,19 +643,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-axum"
-version = "0.1.0"
-dependencies = [
- "async-stripe",
- "axum",
- "lambda_http",
- "lambda_runtime",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "http-body"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1100,6 +1101,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
+name = "openssl-src"
+version = "300.2.3+3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cff92b6f71555b61bb9315f7c64da3ca43d87531622120fea0195fc761b4843"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1107,6 +1117,7 @@ checksum = "c597637d56fbc83893a35eb0dd04b2b8e7a50c91e64e9493e398b5df4fb45fa2"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
