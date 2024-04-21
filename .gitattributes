@@ -1,0 +1,2 @@
+*.lock.hcl linguist-generated
+Cargo.lock linguist-generated
