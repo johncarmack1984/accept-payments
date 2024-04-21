@@ -18,8 +18,14 @@ jobs:
           profile: minimal
           override: true
 
-      - name: Install OpenSSL
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Check OpenSSL installation
+        run: |
+          openssl version -a
+          which openssl
+          echo "Libraries:"
+          find /usr -type d -name openssl
+          echo "Headers:"
+          find /usr/include -name 'opensslconf.h'
 
       - name: Cache cargo registry
         uses: actions/cache@v3
@@ -33,9 +39,9 @@ jobs:
       - name: Release lambda
         run: |
           pip install cargo-lambda
-          cargo lambda build --release
-          cargo lambda deploy accept-payments
-        env:
-          AWS_DEFAULT_REGION: us-west-1
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        #   cargo lambda build --release
+        #   cargo lambda deploy accept-payments
+        # env:
+        #   AWS_DEFAULT_REGION: us-west-1
+        #   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        #   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
