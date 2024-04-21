@@ -4,11 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-async-stripe = { version = "0.34.1", features = ["runtime-tokio-hyper"] }
+# async-stripe = { version = "0.34.1", features = ["runtime-tokio-hyper"] }
 axum = "0.7"
+bb8 = "0.8.0"
+diesel = "2.0.3"
+diesel-async = { version = "0.2.1", features = ["postgres", "bb8"] }
 lambda_http = "0.11.1"
 lambda_runtime = "0.11.1"
-openssl = { version = "0.10", features = ["vendored"] }
 serde = "1.0.196"
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros"] }
