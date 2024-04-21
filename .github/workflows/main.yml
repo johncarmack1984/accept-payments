@@ -9,7 +9,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -23,9 +23,12 @@ jobs:
         continue-on-error: false
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-build-cache
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Release lambda
         run: |
