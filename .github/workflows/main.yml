@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -22,6 +25,7 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - uses: goto-bus-stop/setup-zig@v2
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Release lambda
