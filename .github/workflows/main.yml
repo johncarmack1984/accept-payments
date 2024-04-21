@@ -29,7 +29,6 @@ jobs:
 
       - name: Release lambda
         run: |
-          # sudo apt install libssl-dev
           pip install cargo-lambda
           cargo lambda build --release
           cargo lambda deploy --enable-function-url
