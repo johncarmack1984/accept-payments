@@ -2,3 +2,6 @@
 .dev
 .env.local
 *.crt
+
+CLAUDE.md
+.claude/

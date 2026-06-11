@@ -1,7 +1,17 @@
+data "aws_caller_identity" "current" {}
+
+locals {
+  account_id = data.aws_caller_identity.current.account_id
+}
+
 resource "aws_iam_user" "accept-payment-lambda-service-user" {
   name = "accept-payment-lambda-service-user"
 }
 
+# access key cannot be imported; rotate via Terraform if desired
+# (the user's original key was deleted outside Terraform; the key this
+# resource now tracks was created by a later apply and is live — keep the
+# GitHub Actions secrets in sync with it)
 resource "aws_iam_access_key" "accept-payment-lambda-service-user" {
   user = aws_iam_user.accept-payment-lambda-service-user.name
 }
@@ -22,8 +32,8 @@ resource "aws_iam_policy" "accept-payment-lambda-service-policy" {
           "iam:UpdateAssumeRolePolicy",
         ]
         Resource = [
-          "arn:aws:iam::735853783919:role/AWSLambdaBasicExecutionRole",
-          "arn:aws:iam::735853783919:role/cargo-lambda-role-*"
+          "arn:aws:iam::${local.account_id}:role/AWSLambdaBasicExecutionRole",
+          "arn:aws:iam::${local.account_id}:role/cargo-lambda-role-*"
         ]
       },
       {
@@ -41,7 +51,7 @@ resource "aws_iam_policy" "accept-payment-lambda-service-policy" {
           "lambda:TagResource"
         ]
         Resource = [
-          "arn:aws:lambda:us-west-1:735853783919:function:accept-payments",
+          "arn:aws:lambda:${var.aws_region}:${local.account_id}:function:accept-payments",
         ]
       }
     ]
