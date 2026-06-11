@@ -21,7 +21,14 @@ jobs:
           cache-all-crates: "true"
       - run: pip3 install cargo-lambda
       - run: cargo lambda build --release --arm64
-      - run: cargo lambda deploy accept-payments --enable-function-url
+      - run: cargo lambda deploy accept-payments --enable-function-url --env-var DB_BUCKET=accept-payments-db-johncarmack1984
+        env:
+          AWS_DEFAULT_REGION: us-west-1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # single writer: concurrent instances would clobber the shared S3 db file
+      - run: aws lambda put-function-concurrency --function-name accept-payments --reserved-concurrent-executions 1
         env:
           AWS_DEFAULT_REGION: us-west-1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

@@ -48,6 +48,7 @@ resource "aws_iam_policy" "accept-payment-lambda-service-policy" {
           "lambda:UpdateFunctionCode",
           "lambda:UpdateFunctionConfiguration",
           "lambda:PublishVersion",
+          "lambda:PutFunctionConcurrency",
           "lambda:TagResource"
         ]
         Resource = [

@@ -5,12 +5,15 @@ edition = "2021"
 
 [dependencies]
 # async-stripe = { version = "0.34.1", features = ["runtime-tokio-hyper"] }
+aws-config = "1"
+aws-sdk-s3 = "1"
 axum = "0.7"
-bb8 = "0.8.0"
-diesel = "2.0.3"
-diesel-async = { version = "0.2.1", features = ["postgres", "bb8"] }
+diesel = { version = "2", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2"
 lambda_http = "0.11.1"
 lambda_runtime = "0.11.1"
+# bundled so the sqlite C library cross-compiles into the ARM64 lambda binary
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 serde = "1.0.196"
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros"] }
