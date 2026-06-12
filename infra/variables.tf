@@ -7,5 +7,11 @@ variable "aws_region" {
 variable "db_bucket_name" {
   type        = string
   default     = "accept-payments-db-johncarmack1984"
-  description = "S3 bucket holding the SQLite database file. Must match DB_BUCKET in the deploy workflow."
+  description = "S3 bucket that held the retired SQLite database file."
+}
+
+variable "db_table_name" {
+  type        = string
+  default     = "accept-payments-posts"
+  description = "DynamoDB table holding posts. Must match DB_TABLE in the deploy workflow."
 }

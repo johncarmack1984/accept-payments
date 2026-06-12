@@ -1,7 +1,0 @@
--- Your SQL goes here
-CREATE TABLE posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  published BOOLEAN NOT NULL DEFAULT FALSE
-)
