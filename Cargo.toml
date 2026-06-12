@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# async-stripe = { version = "0.34.1", features = ["runtime-tokio-hyper"] }
+# "full" matches the crate's default resource set — webhook-events fails to
+# compile against narrower feature combinations (missing cross-resource types)
+async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls", "full", "webhook-events"] }
 aws-config = "1"
 aws-sdk-dynamodb = "1"
 axum = "0.7"

@@ -14,6 +14,21 @@ resource "aws_dynamodb_table" "posts" {
   }
 }
 
+# Completed Stripe checkouts, keyed by webhook event id so delivery retries
+# can be deduplicated with a conditional write.
+resource "aws_dynamodb_table" "payments" {
+  name           = var.payments_table_name
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "event_id"
+
+  attribute {
+    name = "event_id"
+    type = "S"
+  }
+}
+
 resource "aws_iam_role_policy" "cargo-lambda-role-db-access" {
   name = "accept-payments-db-access"
   role = aws_iam_role.cargo-lambda-role.id
@@ -30,6 +45,14 @@ resource "aws_iam_role_policy" "cargo-lambda-role-db-access" {
           "dynamodb:Scan",
         ]
         Resource = aws_dynamodb_table.posts.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:Scan",
+        ]
+        Resource = aws_dynamodb_table.payments.arn
       }
     ]
   })

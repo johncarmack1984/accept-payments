@@ -2,13 +2,19 @@ use std::collections::HashMap;
 
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use axum::{
-    extract::{Path, State},
+    extract::{Host, Path, State},
+    http::HeaderMap,
     response::Json,
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use lambda_http::{http::StatusCode, run, tracing, Error};
 use serde::{Deserialize, Serialize};
+use stripe::{
+    CheckoutSession, CheckoutSessionMode, Client as StripeClient, CreateCheckoutSession,
+    CreateCheckoutSessionLineItems, CreateCheckoutSessionLineItemsPriceData,
+    CreateCheckoutSessionLineItemsPriceDataProductData, Currency, EventObject, EventType, Webhook,
+};
 
 // Item id 0 is the atomic counter that hands out sequential post ids. It
 // never carries post fields, so item_to_post naturally excludes it from reads.
@@ -29,12 +35,41 @@ struct NewPost {
     published: bool,
 }
 
+#[derive(Deserialize)]
+struct NewCheckout {
+    amount_cents: i64,
+    description: String,
+}
+
+#[derive(Serialize)]
+struct CheckoutCreated {
+    session_id: String,
+    url: String,
+}
+
+#[derive(Serialize)]
+struct Payment {
+    event_id: String,
+    session_id: String,
+    amount_total: i64,
+    currency: String,
+    created: i64,
+}
+
 type ServerError = (StatusCode, String);
+
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|value| !value.is_empty())
+}
 
 #[derive(Clone)]
 struct Db {
     client: aws_sdk_dynamodb::Client,
     table: String,
+    payments_table: String,
+    // None until the Stripe secrets are configured; payment routes 503 cleanly
+    stripe: Option<StripeClient>,
+    webhook_secret: Option<String>,
 }
 
 impl Db {
@@ -42,8 +77,11 @@ impl Db {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         Self {
             client: aws_sdk_dynamodb::Client::new(&config),
-            table: std::env::var("DB_TABLE")
-                .unwrap_or_else(|_| "accept-payments-posts".to_string()),
+            table: env_nonempty("DB_TABLE").unwrap_or_else(|| "accept-payments-posts".to_string()),
+            payments_table: env_nonempty("PAYMENTS_TABLE")
+                .unwrap_or_else(|| "accept-payments-payments".to_string()),
+            stripe: env_nonempty("STRIPE_SECRET_KEY").map(StripeClient::new),
+            webhook_secret: env_nonempty("STRIPE_WEBHOOK_SECRET"),
         }
     }
 
@@ -69,6 +107,46 @@ impl Db {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "counter returned no value".to_string(),
             ))
+    }
+
+    async fn record_payment(
+        &self,
+        event_id: &str,
+        session: &CheckoutSession,
+    ) -> Result<(), ServerError> {
+        let currency = session
+            .currency
+            .map(|currency| currency.to_string())
+            .unwrap_or_else(|| "usd".to_string());
+
+        let result = self
+            .client
+            .put_item()
+            .table_name(&self.payments_table)
+            .item("event_id", AttributeValue::S(event_id.to_string()))
+            .item("session_id", AttributeValue::S(session.id.to_string()))
+            .item(
+                "amount_total",
+                AttributeValue::N(session.amount_total.unwrap_or(0).to_string()),
+            )
+            .item("currency", AttributeValue::S(currency))
+            .item("created", AttributeValue::N(session.created.to_string()))
+            // webhook deliveries retry; the event id makes replays a no-op
+            .condition_expression("attribute_not_exists(event_id)")
+            .send()
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err)
+                if err
+                    .as_service_error()
+                    .is_some_and(|err| err.is_conditional_check_failed_exception()) =>
+            {
+                Ok(())
+            }
+            Err(err) => Err(internal_server_error(err)),
+        }
     }
 }
 
@@ -175,6 +253,126 @@ async fn delete_post(State(db): State<Db>, Path(post_id): Path<i64>) -> Result<(
     Ok(())
 }
 
+fn item_to_payment(item: &HashMap<String, AttributeValue>) -> Option<Payment> {
+    Some(Payment {
+        event_id: item.get("event_id")?.as_s().ok()?.clone(),
+        session_id: item.get("session_id")?.as_s().ok()?.clone(),
+        amount_total: item.get("amount_total")?.as_n().ok()?.parse().ok()?,
+        currency: item.get("currency")?.as_s().ok()?.clone(),
+        created: item.get("created")?.as_n().ok()?.parse().ok()?,
+    })
+}
+
+async fn create_checkout(
+    State(db): State<Db>,
+    Host(host): Host,
+    Json(checkout): Json<NewCheckout>,
+) -> Result<Json<CheckoutCreated>, ServerError> {
+    let stripe = db.stripe.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "payments are not configured".to_string(),
+    ))?;
+
+    // Stripe's minimum charge is $0.50; cap keeps test-mode fat fingers sane
+    if !(50..=1_000_000).contains(&checkout.amount_cents) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "amount_cents must be between 50 and 1000000".to_string(),
+        ));
+    }
+
+    let success_url = format!("https://{host}/posts");
+    let cancel_url = format!("https://{host}/posts");
+
+    let mut params = CreateCheckoutSession::new();
+    params.mode = Some(CheckoutSessionMode::Payment);
+    params.success_url = Some(&success_url);
+    params.cancel_url = Some(&cancel_url);
+    params.line_items = Some(vec![CreateCheckoutSessionLineItems {
+        quantity: Some(1),
+        price_data: Some(CreateCheckoutSessionLineItemsPriceData {
+            currency: Currency::USD,
+            unit_amount: Some(checkout.amount_cents),
+            product_data: Some(CreateCheckoutSessionLineItemsPriceDataProductData {
+                name: checkout.description.clone(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }]);
+
+    let session = CheckoutSession::create(stripe, params)
+        .await
+        .map_err(internal_server_error)?;
+    let url = session.url.clone().ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "checkout session has no url".to_string(),
+    ))?;
+
+    Ok(Json(CheckoutCreated {
+        session_id: session.id.to_string(),
+        url,
+    }))
+}
+
+async fn stripe_webhook(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<StatusCode, ServerError> {
+    let secret = db.webhook_secret.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "payments are not configured".to_string(),
+    ))?;
+
+    let signature = headers
+        .get("stripe-signature")
+        .and_then(|value| value.to_str().ok())
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "missing stripe-signature header".to_string(),
+        ))?;
+
+    let event = Webhook::construct_event(&body, signature, secret)
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    if event.type_ == EventType::CheckoutSessionCompleted {
+        if let EventObject::CheckoutSession(session) = event.data.object {
+            db.record_payment(event.id.as_str(), &session).await?;
+        }
+    }
+
+    // unhandled event types are acknowledged so Stripe stops retrying them
+    Ok(StatusCode::OK)
+}
+
+async fn list_payments(State(db): State<Db>) -> Result<Json<Vec<Payment>>, ServerError> {
+    let mut payments = Vec::new();
+    let mut start_key = None;
+
+    loop {
+        let page = db
+            .client
+            .scan()
+            .table_name(&db.payments_table)
+            .set_exclusive_start_key(start_key)
+            .send()
+            .await
+            .map_err(internal_server_error)?;
+
+        payments.extend(page.items().iter().filter_map(item_to_payment));
+
+        start_key = page.last_evaluated_key().map(|key| key.clone());
+        if start_key.is_none() {
+            break;
+        }
+    }
+
+    payments.sort_by_key(|payment| std::cmp::Reverse(payment.created));
+    Ok(Json(payments))
+}
+
 fn internal_server_error<E: std::error::Error>(err: E) -> ServerError {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
@@ -190,7 +388,12 @@ async fn main() -> Result<(), Error> {
     let posts_api = Router::new()
         .route("/", get(list_posts).post(create_post))
         .route("/:id", get(get_post).delete(delete_post));
-    let app = Router::new().nest("/posts", posts_api).with_state(db);
+    let app = Router::new()
+        .nest("/posts", posts_api)
+        .route("/checkout", post(create_checkout))
+        .route("/payments", get(list_payments))
+        .route("/webhooks/stripe", post(stripe_webhook))
+        .with_state(db);
 
     run(app).await
 }
@@ -216,6 +419,34 @@ mod tests {
         assert_eq!(post.title, "title");
         assert_eq!(post.content, "content");
         assert!(post.published);
+    }
+
+    #[test]
+    fn payment_item_round_trips() {
+        let item = HashMap::from([
+            ("event_id".to_string(), AttributeValue::S("evt_1".to_string())),
+            (
+                "session_id".to_string(),
+                AttributeValue::S("cs_test_1".to_string()),
+            ),
+            ("amount_total".to_string(), AttributeValue::N("500".to_string())),
+            ("currency".to_string(), AttributeValue::S("usd".to_string())),
+            (
+                "created".to_string(),
+                AttributeValue::N("1765000000".to_string()),
+            ),
+        ]);
+
+        let payment = item_to_payment(&item).unwrap();
+        assert_eq!(payment.event_id, "evt_1");
+        assert_eq!(payment.amount_total, 500);
+        assert_eq!(payment.created, 1765000000);
+
+        let incomplete = HashMap::from([(
+            "event_id".to_string(),
+            AttributeValue::S("evt_2".to_string()),
+        )]);
+        assert!(item_to_payment(&incomplete).is_none());
     }
 
     #[test]

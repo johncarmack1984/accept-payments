@@ -9,3 +9,9 @@ variable "db_table_name" {
   default     = "accept-payments-posts"
   description = "DynamoDB table holding posts. Must match DB_TABLE in the deploy workflow."
 }
+
+variable "payments_table_name" {
+  type        = string
+  default     = "accept-payments-payments"
+  description = "DynamoDB table holding completed Stripe payments. Must match PAYMENTS_TABLE in the deploy workflow."
+}
