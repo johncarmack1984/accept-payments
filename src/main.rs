@@ -11,7 +11,8 @@ use axum::{
 use lambda_http::{http::StatusCode, run, tracing, Error};
 use serde::{Deserialize, Serialize};
 use stripe::{
-    CheckoutSession, CheckoutSessionMode, CheckoutSessionPaymentStatus, Client as StripeClient,
+    CheckoutSession, CheckoutSessionId, CheckoutSessionMode, CheckoutSessionPaymentStatus,
+    Client as StripeClient,
     CreateCheckoutSession, CreateCheckoutSessionLineItems, CreateCheckoutSessionLineItemsPriceData,
     CreateCheckoutSessionLineItemsPriceDataProductData, CreateCheckoutSessionPaymentMethodTypes,
     Currency, EventObject, EventType, Webhook,
@@ -71,6 +72,9 @@ struct Db {
     // None until the Stripe secrets are configured; payment routes 503 cleanly
     stripe: Option<StripeClient>,
     webhook_secret: Option<String>,
+    // origin of the SPA (e.g. http://localhost:5173); checkout redirect URLs
+    // point here, falling back to the request host when unset
+    web_origin: Option<String>,
 }
 
 impl Db {
@@ -83,6 +87,7 @@ impl Db {
                 .unwrap_or_else(|| "accept-payments-payments".to_string()),
             stripe: env_nonempty("STRIPE_SECRET_KEY").map(StripeClient::new),
             webhook_secret: env_nonempty("STRIPE_WEBHOOK_SECRET"),
+            web_origin: env_nonempty("WEB_ORIGIN"),
         }
     }
 
@@ -282,8 +287,13 @@ async fn create_checkout(
         ));
     }
 
-    let success_url = format!("https://{host}/posts");
-    let cancel_url = format!("https://{host}/posts");
+    // the SPA renders the receipt; fall back to the request host if unconfigured
+    let web_origin = db
+        .web_origin
+        .clone()
+        .unwrap_or_else(|| format!("https://{host}"));
+    let success_url = format!("{web_origin}/success?session_id={{CHECKOUT_SESSION_ID}}");
+    let cancel_url = format!("{web_origin}/");
 
     let mut params = CreateCheckoutSession::new();
     params.mode = Some(CheckoutSessionMode::Payment);
@@ -321,6 +331,52 @@ async fn create_checkout(
         session_id: session.id.to_string(),
         url,
     }))
+}
+
+#[derive(Serialize)]
+struct SessionStatus {
+    id: String,
+    payment_status: &'static str,
+    amount_total: Option<i64>,
+    currency: Option<String>,
+}
+
+// The SPA's /success route reads ?session_id and fetches this to render the
+// receipt — telling a settled card payment ("paid") apart from an ACH debit
+// that is still clearing ("unpaid").
+async fn get_session(
+    State(db): State<Db>,
+    Path(id): Path<String>,
+) -> Result<Json<SessionStatus>, ServerError> {
+    let stripe = db.stripe.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "payments are not configured".to_string(),
+    ))?;
+
+    let id = id
+        .parse::<CheckoutSessionId>()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid session id".to_string()))?;
+
+    let session = CheckoutSession::retrieve(stripe, &id, &[])
+        .await
+        .map_err(internal_server_error)?;
+
+    Ok(Json(SessionStatus {
+        id: session.id.to_string(),
+        payment_status: payment_status_str(session.payment_status),
+        amount_total: session.amount_total,
+        currency: session.currency.map(|currency| currency.to_string()),
+    }))
+}
+
+// Cards settle inside the session (paid); ACH debits land unpaid and settle
+// days later. The frontend keys its receipt messaging on this.
+fn payment_status_str(status: CheckoutSessionPaymentStatus) -> &'static str {
+    match status {
+        CheckoutSessionPaymentStatus::Paid => "paid",
+        CheckoutSessionPaymentStatus::Unpaid => "unpaid",
+        _ => "no_payment_required",
+    }
 }
 
 async fn stripe_webhook(
@@ -412,6 +468,7 @@ async fn main() -> Result<(), Error> {
     let app = Router::new()
         .nest("/posts", posts_api)
         .route("/checkout", post(create_checkout))
+        .route("/sessions/:id", get(get_session))
         .route("/payments", get(list_payments))
         .route("/webhooks/stripe", post(stripe_webhook))
         .with_state(db);
@@ -545,5 +602,14 @@ mod tests {
         ]);
 
         assert!(item_to_post(&counter).is_none());
+    }
+
+    #[test]
+    fn payment_status_maps_to_stable_strings() {
+        assert_eq!(payment_status_str(CheckoutSessionPaymentStatus::Paid), "paid");
+        assert_eq!(
+            payment_status_str(CheckoutSessionPaymentStatus::Unpaid),
+            "unpaid"
+        );
     }
 }
