@@ -293,7 +293,7 @@ async fn create_checkout(
         .clone()
         .unwrap_or_else(|| format!("https://{host}"));
     let success_url = format!("{web_origin}/success?session_id={{CHECKOUT_SESSION_ID}}");
-    let cancel_url = format!("{web_origin}/");
+    let cancel_url = format!("{web_origin}/cancel");
 
     let mut params = CreateCheckoutSession::new();
     params.mode = Some(CheckoutSessionMode::Payment);
