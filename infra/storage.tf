@@ -29,6 +29,22 @@ resource "aws_dynamodb_table" "payments" {
   }
 }
 
+# Invoices we issue and track (paid by ACH/wire directly, not Stripe). Stored as
+# a JSON blob keyed by an opaque token id; the item id "counter" hands out the
+# sequential invoice numbers.
+resource "aws_dynamodb_table" "invoices" {
+  name           = var.invoices_table_name
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+}
+
 resource "aws_iam_role_policy" "cargo-lambda-role-db-access" {
   name = "accept-payments-db-access"
   role = aws_iam_role.cargo-lambda-role.id
@@ -53,6 +69,16 @@ resource "aws_iam_role_policy" "cargo-lambda-role-db-access" {
           "dynamodb:Scan",
         ]
         Resource = aws_dynamodb_table.payments.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:Scan",
+        ]
+        Resource = aws_dynamodb_table.invoices.arn
       }
     ]
   })
