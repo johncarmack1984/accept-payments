@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use axum::{
     extract::{Host, Path, State},
-    http::HeaderMap,
+    http::{header::AUTHORIZATION, HeaderMap},
     response::Json,
     routing::{get, post},
     Router,
@@ -17,6 +18,7 @@ use stripe::{
     CreateCheckoutSessionLineItemsPriceDataProductData, CreateCheckoutSessionPaymentMethodTypes,
     Currency, EventObject, EventType, Webhook,
 };
+use uuid::Uuid;
 
 // Item id 0 is the atomic counter that hands out sequential post ids. It
 // never carries post fields, so item_to_post naturally excludes it from reads.
@@ -58,6 +60,80 @@ struct Payment {
     created: i64,
 }
 
+// Invoicing — independent of Stripe. We issue an invoice and the client pays it
+// directly (ACH/wire to the remit-to instructions); status is set by hand for now.
+#[derive(Clone, Serialize, Deserialize)]
+struct LineItem {
+    description: String,
+    quantity: i64,
+    unit_amount_cents: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum InvoiceStatus {
+    Open,
+    Paid,
+    Void,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Invoice {
+    // opaque, unguessable id; also the token in the public /i/<id> link
+    id: String,
+    number: i64,
+    status: InvoiceStatus,
+    client_name: String,
+    client_email: Option<String>,
+    po_number: Option<String>,
+    line_items: Vec<LineItem>,
+    currency: String,
+    notes: Option<String>,
+    issued_at: i64,
+    due_at: i64,
+    created: i64,
+    paid_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct NewInvoice {
+    client_name: String,
+    #[serde(default)]
+    client_email: Option<String>,
+    #[serde(default)]
+    po_number: Option<String>,
+    line_items: Vec<LineItem>,
+    #[serde(default)]
+    currency: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    due_in_days: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct UpdateInvoice {
+    status: InvoiceStatus,
+}
+
+// The client-facing view from GET /invoice/<token>: the invoice plus its
+// authoritative total and our pay-to details (from env, shown on every invoice).
+#[derive(Serialize)]
+struct PublicInvoice {
+    number: i64,
+    status: InvoiceStatus,
+    client_name: String,
+    po_number: Option<String>,
+    line_items: Vec<LineItem>,
+    currency: String,
+    total: i64,
+    issued_at: i64,
+    due_at: i64,
+    paid_at: Option<i64>,
+    business_name: Option<String>,
+    remit_to: Option<String>,
+}
+
 type ServerError = (StatusCode, String);
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -75,6 +151,7 @@ struct Db {
     // origin of the SPA (e.g. http://localhost:5173); checkout redirect URLs
     // point here, falling back to the request host when unset
     web_origin: Option<String>,
+    invoices_table: String,
 }
 
 impl Db {
@@ -88,6 +165,8 @@ impl Db {
             stripe: env_nonempty("STRIPE_SECRET_KEY").map(StripeClient::new),
             webhook_secret: env_nonempty("STRIPE_WEBHOOK_SECRET"),
             web_origin: env_nonempty("WEB_ORIGIN"),
+            invoices_table: env_nonempty("INVOICES_TABLE")
+                .unwrap_or_else(|| "accept-payments-invoices".to_string()),
         }
     }
 
@@ -153,6 +232,83 @@ impl Db {
             }
             Err(err) => Err(internal_server_error(err)),
         }
+    }
+
+    async fn next_invoice_number(&self) -> Result<i64, ServerError> {
+        let counter = self
+            .client
+            .update_item()
+            .table_name(&self.invoices_table)
+            .key("id", AttributeValue::S("counter".to_string()))
+            .update_expression("ADD next_number :one")
+            .expression_attribute_values(":one", AttributeValue::N("1".to_string()))
+            .return_values(ReturnValue::UpdatedNew)
+            .send()
+            .await
+            .map_err(internal_server_error)?;
+
+        counter
+            .attributes()
+            .and_then(|attrs| attrs.get("next_number"))
+            .and_then(|value| value.as_n().ok())
+            .and_then(|n| n.parse().ok())
+            .ok_or((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "counter returned no value".to_string(),
+            ))
+    }
+
+    // Invoices are stored as a JSON blob under their id; only the id (and the
+    // counter item's next_number) are top-level attributes.
+    async fn put_invoice(&self, invoice: &Invoice) -> Result<(), ServerError> {
+        let data = serde_json::to_string(invoice).map_err(internal_server_error)?;
+        self.client
+            .put_item()
+            .table_name(&self.invoices_table)
+            .item("id", AttributeValue::S(invoice.id.clone()))
+            .item("data", AttributeValue::S(data))
+            .send()
+            .await
+            .map_err(internal_server_error)?;
+        Ok(())
+    }
+
+    async fn fetch_invoice(&self, id: &str) -> Result<Option<Invoice>, ServerError> {
+        let item = self
+            .client
+            .get_item()
+            .table_name(&self.invoices_table)
+            .key("id", AttributeValue::S(id.to_string()))
+            .send()
+            .await
+            .map_err(internal_server_error)?;
+        Ok(item.item().and_then(item_to_invoice))
+    }
+
+    async fn fetch_invoices(&self) -> Result<Vec<Invoice>, ServerError> {
+        let mut invoices = Vec::new();
+        let mut start_key = None;
+
+        loop {
+            let page = self
+                .client
+                .scan()
+                .table_name(&self.invoices_table)
+                .set_exclusive_start_key(start_key)
+                .send()
+                .await
+                .map_err(internal_server_error)?;
+
+            invoices.extend(page.items().iter().filter_map(item_to_invoice));
+
+            start_key = page.last_evaluated_key().map(|key| key.clone());
+            if start_key.is_none() {
+                break;
+            }
+        }
+
+        invoices.sort_by_key(|invoice| std::cmp::Reverse(invoice.number));
+        Ok(invoices)
     }
 }
 
@@ -450,6 +606,172 @@ async fn list_payments(State(db): State<Db>) -> Result<Json<Vec<Payment>>, Serve
     Ok(Json(payments))
 }
 
+fn item_to_invoice(item: &HashMap<String, AttributeValue>) -> Option<Invoice> {
+    // the number-counter item carries no "data" attribute, so it's skipped here
+    let data = item.get("data")?.as_s().ok()?;
+    serde_json::from_str(data).ok()
+}
+
+fn invoice_total(line_items: &[LineItem]) -> i64 {
+    line_items
+        .iter()
+        .map(|item| item.quantity.saturating_mul(item.unit_amount_cents))
+        .sum()
+}
+
+fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+// constant-time compare so a wrong token can't be teased out byte-by-byte by timing
+fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn bearer_matches(expected: &str, header: Option<&str>) -> bool {
+    header
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| ct_eq(token, expected))
+}
+
+// Admin invoice routes require `Authorization: Bearer <ADMIN_TOKEN>`. With no
+// ADMIN_TOKEN configured the admin side is closed, not open.
+fn check_admin(headers: &HeaderMap) -> Result<(), ServerError> {
+    let expected = env_nonempty("ADMIN_TOKEN").ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "admin is not configured".to_string(),
+    ))?;
+    let header = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok());
+    if bearer_matches(&expected, header) {
+        Ok(())
+    } else {
+        Err((StatusCode::UNAUTHORIZED, "unauthorized".to_string()))
+    }
+}
+
+fn validate_line_items(line_items: &[LineItem]) -> Result<(), ServerError> {
+    let ok = !line_items.is_empty()
+        && line_items.iter().all(|item| {
+            !item.description.trim().is_empty() && item.quantity >= 1 && item.unit_amount_cents >= 0
+        })
+        && invoice_total(line_items) >= 1;
+    if ok {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::BAD_REQUEST,
+            "line_items must be non-empty with quantity >= 1 and a positive total".to_string(),
+        ))
+    }
+}
+
+async fn create_invoice(
+    headers: HeaderMap,
+    State(db): State<Db>,
+    Json(new): Json<NewInvoice>,
+) -> Result<Json<Invoice>, ServerError> {
+    check_admin(&headers)?;
+
+    if new.client_name.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "client_name is required".to_string()));
+    }
+    validate_line_items(&new.line_items)?;
+
+    let now = now_secs();
+    let invoice = Invoice {
+        id: format!("inv_{}", Uuid::new_v4().simple()),
+        number: db.next_invoice_number().await?,
+        status: InvoiceStatus::Open,
+        client_name: new.client_name,
+        client_email: new.client_email,
+        po_number: new.po_number,
+        line_items: new.line_items,
+        currency: new.currency.unwrap_or_else(|| "usd".to_string()),
+        notes: new.notes,
+        issued_at: now,
+        due_at: now + i64::from(new.due_in_days.unwrap_or(30)) * 86_400,
+        created: now,
+        paid_at: None,
+    };
+
+    db.put_invoice(&invoice).await?;
+    Ok(Json(invoice))
+}
+
+async fn list_invoices(
+    headers: HeaderMap,
+    State(db): State<Db>,
+) -> Result<Json<Vec<Invoice>>, ServerError> {
+    check_admin(&headers)?;
+    Ok(Json(db.fetch_invoices().await?))
+}
+
+async fn get_invoice(
+    headers: HeaderMap,
+    State(db): State<Db>,
+    Path(id): Path<String>,
+) -> Result<Json<Invoice>, ServerError> {
+    check_admin(&headers)?;
+    db.fetch_invoice(&id)
+        .await?
+        .map(Json)
+        .ok_or((StatusCode::NOT_FOUND, "no invoice with that id".to_string()))
+}
+
+async fn update_invoice(
+    headers: HeaderMap,
+    State(db): State<Db>,
+    Path(id): Path<String>,
+    Json(update): Json<UpdateInvoice>,
+) -> Result<Json<Invoice>, ServerError> {
+    check_admin(&headers)?;
+
+    let mut invoice = db
+        .fetch_invoice(&id)
+        .await?
+        .ok_or((StatusCode::NOT_FOUND, "no invoice with that id".to_string()))?;
+
+    // stamp paid_at the first time it's marked paid; clear it on any other status
+    invoice.paid_at = match update.status {
+        InvoiceStatus::Paid => Some(invoice.paid_at.unwrap_or_else(now_secs)),
+        _ => None,
+    };
+    invoice.status = update.status;
+
+    db.put_invoice(&invoice).await?;
+    Ok(Json(invoice))
+}
+
+// Public, token-gated: the page a client opens to view and pay the invoice.
+async fn public_invoice(
+    State(db): State<Db>,
+    Path(token): Path<String>,
+) -> Result<Json<PublicInvoice>, ServerError> {
+    let invoice = db
+        .fetch_invoice(&token)
+        .await?
+        .ok_or((StatusCode::NOT_FOUND, "invoice not found".to_string()))?;
+
+    Ok(Json(PublicInvoice {
+        number: invoice.number,
+        status: invoice.status,
+        total: invoice_total(&invoice.line_items),
+        client_name: invoice.client_name,
+        po_number: invoice.po_number,
+        line_items: invoice.line_items,
+        currency: invoice.currency,
+        issued_at: invoice.issued_at,
+        due_at: invoice.due_at,
+        paid_at: invoice.paid_at,
+        business_name: env_nonempty("BUSINESS_NAME"),
+        remit_to: env_nonempty("REMIT_TO"),
+    }))
+}
+
 fn internal_server_error<E: std::error::Error>(err: E) -> ServerError {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
@@ -498,7 +820,10 @@ async fn main() -> Result<(), Error> {
         .route("/checkout", post(create_checkout))
         .route("/sessions/:id", get(get_session))
         .route("/payments", get(list_payments))
-        .route("/webhooks/stripe", post(stripe_webhook));
+        .route("/webhooks/stripe", post(stripe_webhook))
+        .route("/invoices", post(create_invoice).get(list_invoices))
+        .route("/invoices/:id", get(get_invoice).patch(update_invoice))
+        .route("/invoice/:token", get(public_invoice));
 
     // With the `embed-web` feature the built SPA is baked into the binary and
     // served for any non-API path (client routes fall back to index.html).
@@ -645,5 +970,82 @@ mod tests {
             payment_status_str(CheckoutSessionPaymentStatus::Unpaid),
             "unpaid"
         );
+    }
+
+    fn sample_invoice() -> Invoice {
+        Invoice {
+            id: "inv_test".to_string(),
+            number: 7,
+            status: InvoiceStatus::Open,
+            client_name: "Acme Co".to_string(),
+            client_email: Some("ap@acme.example".to_string()),
+            po_number: Some("PO-42".to_string()),
+            line_items: vec![
+                LineItem {
+                    description: "Consulting".to_string(),
+                    quantity: 40,
+                    unit_amount_cents: 15_000,
+                },
+                LineItem {
+                    description: "Setup fee".to_string(),
+                    quantity: 1,
+                    unit_amount_cents: 50_000,
+                },
+            ],
+            currency: "usd".to_string(),
+            notes: None,
+            issued_at: 1_765_000_000,
+            due_at: 1_767_592_000,
+            created: 1_765_000_000,
+            paid_at: None,
+        }
+    }
+
+    #[test]
+    fn invoice_total_sums_line_items() {
+        // 40 * 15000 + 1 * 50000 = 650000
+        assert_eq!(invoice_total(&sample_invoice().line_items), 650_000);
+    }
+
+    #[test]
+    fn invoice_round_trips_through_storage() {
+        let invoice = sample_invoice();
+        let data = serde_json::to_string(&invoice).unwrap();
+        let item = HashMap::from([
+            ("id".to_string(), AttributeValue::S(invoice.id.clone())),
+            ("data".to_string(), AttributeValue::S(data)),
+        ]);
+
+        let back = item_to_invoice(&item).unwrap();
+        assert_eq!(back.id, "inv_test");
+        assert_eq!(back.number, 7);
+        assert_eq!(back.status, InvoiceStatus::Open);
+        assert_eq!(back.line_items.len(), 2);
+        assert_eq!(invoice_total(&back.line_items), 650_000);
+    }
+
+    #[test]
+    fn invoice_counter_item_is_not_an_invoice() {
+        let counter = HashMap::from([
+            ("id".to_string(), AttributeValue::S("counter".to_string())),
+            ("next_number".to_string(), AttributeValue::N("8".to_string())),
+        ]);
+        assert!(item_to_invoice(&counter).is_none());
+    }
+
+    #[test]
+    fn bearer_token_is_checked() {
+        assert!(bearer_matches("s3cret", Some("Bearer s3cret")));
+        assert!(!bearer_matches("s3cret", Some("Bearer nope")));
+        assert!(!bearer_matches("s3cret", Some("s3cret"))); // missing "Bearer " prefix
+        assert!(!bearer_matches("s3cret", None));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_only_equal_strings() {
+        assert!(ct_eq("abc", "abc"));
+        assert!(!ct_eq("abc", "abd"));
+        assert!(!ct_eq("abc", "abcd"));
+        assert!(!ct_eq("", "x"));
     }
 }
