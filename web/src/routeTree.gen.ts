@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SuccessRouteImport } from './routes/success'
 import { Route as CancelRouteImport } from './routes/cancel'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ITokenRouteImport } from './routes/i.$token'
 
@@ -22,6 +23,11 @@ const SuccessRoute = SuccessRouteImport.update({
 const CancelRoute = CancelRouteImport.update({
   id: '/cancel',
   path: '/cancel',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -37,12 +43,14 @@ const ITokenRoute = ITokenRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/cancel': typeof CancelRoute
   '/success': typeof SuccessRoute
   '/i/$token': typeof ITokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/cancel': typeof CancelRoute
   '/success': typeof SuccessRoute
   '/i/$token': typeof ITokenRoute
@@ -50,20 +58,22 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/cancel': typeof CancelRoute
   '/success': typeof SuccessRoute
   '/i/$token': typeof ITokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/cancel' | '/success' | '/i/$token'
+  fullPaths: '/' | '/admin' | '/cancel' | '/success' | '/i/$token'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/cancel' | '/success' | '/i/$token'
-  id: '__root__' | '/' | '/cancel' | '/success' | '/i/$token'
+  to: '/' | '/admin' | '/cancel' | '/success' | '/i/$token'
+  id: '__root__' | '/' | '/admin' | '/cancel' | '/success' | '/i/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
   CancelRoute: typeof CancelRoute
   SuccessRoute: typeof SuccessRoute
   ITokenRoute: typeof ITokenRoute
@@ -85,6 +95,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CancelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -104,6 +121,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
   CancelRoute: CancelRoute,
   SuccessRoute: SuccessRoute,
   ITokenRoute: ITokenRoute,
