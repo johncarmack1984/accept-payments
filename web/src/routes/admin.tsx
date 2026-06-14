@@ -18,93 +18,89 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import {
   AuthError,
-  clearAdminToken,
   createInvoice,
+  fetchMe,
   fetchSettings,
   formatDate,
-  getAdminToken,
   lineItemsTotal,
   listInvoices,
+  logout,
   money,
   saveSettings,
-  setAdminToken,
   setInvoiceStatus,
   type Invoice,
   type InvoiceStatus,
   type NewInvoiceBody,
 } from '@/lib/api'
 
-export const Route = createFileRoute('/admin')({ component: AdminPage })
+export const Route = createFileRoute('/admin')({
+  validateSearch: (search: Record<string, unknown>): { error?: string } => ({
+    error: typeof search.error === 'string' ? search.error : undefined,
+  }),
+  component: AdminPage,
+})
 
 function AdminPage() {
-  const [hasToken, setHasToken] = useState(() => getAdminToken() !== '')
-  const [gateError, setGateError] = useState<string>()
+  const [status, setStatus] = useState<'checking' | 'authed' | 'anon'>('checking')
 
-  const signOut = useCallback((message?: string) => {
-    clearAdminToken()
-    setGateError(message)
-    setHasToken(false)
+  const check = useCallback(() => {
+    fetchMe()
+      .then(() => setStatus('authed'))
+      .catch(() => setStatus('anon'))
   }, [])
 
-  if (!hasToken) {
-    return (
-      <TokenGate
-        error={gateError}
-        onSubmit={(token) => {
-          setAdminToken(token)
-          setGateError(undefined)
-          setHasToken(true)
-        }}
-      />
-    )
+  useEffect(() => {
+    check()
+  }, [check])
+
+  if (status === 'checking') {
+    return <main className="min-h-svh" />
   }
-  return (
-    <Dashboard
-      onAuthError={() => signOut('That token was rejected.')}
-      onSignOut={() => signOut()}
-    />
-  )
+  if (status === 'anon') {
+    return <SignIn />
+  }
+  return <Dashboard onUnauthorized={() => setStatus('anon')} />
 }
 
-function TokenGate({
-  error,
-  onSubmit,
-}: {
-  error?: string
-  onSubmit: (token: string) => void
-}) {
-  const [value, setValue] = useState('')
+const AUTH_ERRORS: Record<string, string> = {
+  forbidden: "That GitHub account isn't authorized for this admin.",
+  state: 'Sign-in expired — please try again.',
+  github: "Couldn't reach GitHub — please try again.",
+  session: 'Something went wrong creating your session.',
+}
+
+function SignIn() {
+  const { error } = Route.useSearch()
   return (
     <main className="grid min-h-svh place-items-center p-6">
       <Card className="w-full max-w-sm">
-        <CardContent className="flex flex-col gap-4 p-6">
-          <div className="space-y-1">
-            <h1 className="font-heading text-xl font-semibold tracking-tight">
-              Admin
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Enter your admin token to continue.
+        <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
+          <h1 className="font-heading text-xl font-semibold tracking-tight">
+            Admin
+          </h1>
+          {error ? (
+            <p className="text-sm text-destructive">
+              {AUTH_ERRORS[error] ?? 'Sign-in failed — please try again.'}
             </p>
-          </div>
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (value.trim()) onSubmit(value.trim())
-            }}
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Sign in to manage invoices.
+            </p>
+          )}
+          <a
+            href="/auth/github/login"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/80"
           >
-            <Input
-              type="password"
-              autoFocus
-              placeholder="ADMIN_TOKEN"
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-            />
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            <Button type="submit" disabled={!value.trim()}>
-              Continue
-            </Button>
-          </form>
+            <svg
+              viewBox="0 0 16 16"
+              className="size-4"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            Sign in with GitHub
+          </a>
         </CardContent>
       </Card>
     </main>
@@ -118,13 +114,7 @@ const STATUS_VARIANT: Record<InvoiceStatus, 'default' | 'secondary' | 'outline'>
     void: 'secondary',
   }
 
-function Dashboard({
-  onAuthError,
-  onSignOut,
-}: {
-  onAuthError: () => void
-  onSignOut: () => void
-}) {
+function Dashboard({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [invoices, setInvoices] = useState<Invoice[] | null>(null)
   const [error, setError] = useState<string>()
   const [creating, setCreating] = useState(false)
@@ -132,10 +122,10 @@ function Dashboard({
 
   const handleError = useCallback(
     (err: unknown) => {
-      if (err instanceof AuthError) onAuthError()
+      if (err instanceof AuthError) onUnauthorized()
       else setError(err instanceof Error ? err.message : 'Something went wrong.')
     },
-    [onAuthError],
+    [onUnauthorized],
   )
 
   const load = useCallback(() => {
@@ -173,7 +163,13 @@ function Dashboard({
           >
             <SettingsIcon /> Settings
           </Button>
-          <Button size="sm" variant="ghost" onClick={onSignOut}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              void logout().finally(onUnauthorized)
+            }}
+          >
             Sign out
           </Button>
         </div>

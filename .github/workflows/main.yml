@@ -33,9 +33,10 @@ jobs:
         working-directory: web
       - run: pip3 install cargo-lambda
       - run: cargo lambda build --release --arm64 --features embed-web
-      # ADMIN_TOKEN is passed via `env:` and a quoted shell var below; an unset
-      # secret becomes empty, which the Lambda treats as "admin not configured"
-      # (admin routes 503) rather than breaking the deploy.
+      # OAuth: the client secret + session signing key are secrets passed via
+      # `env:` and quoted shell vars; the client id and admin login are
+      # non-secret repo variables. Unset values become empty -> the Lambda
+      # treats the admin as "not configured" rather than breaking the deploy.
       - run: >-
           cargo lambda deploy accept-payments --enable-function-url
           --env-var DB_TABLE=accept-payments-posts
@@ -43,11 +44,15 @@ jobs:
           --env-var INVOICES_TABLE=accept-payments-invoices
           --env-var STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
           --env-var STRIPE_WEBHOOK_SECRET="$STRIPE_WEBHOOK_SECRET"
-          --env-var ADMIN_TOKEN="$ADMIN_TOKEN"
+          --env-var GITHUB_CLIENT_ID=${{ vars.GITHUB_CLIENT_ID }}
+          --env-var GITHUB_CLIENT_SECRET="$GITHUB_CLIENT_SECRET"
+          --env-var SESSION_SECRET="$SESSION_SECRET"
+          --env-var ADMIN_GITHUB_LOGIN=${{ vars.ADMIN_GITHUB_LOGIN }}
         env:
           AWS_DEFAULT_REGION: us-west-1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}

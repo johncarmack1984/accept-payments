@@ -74,24 +74,12 @@ export async function fetchInvoice(token: string): Promise<PublicInvoice> {
   return (await res.json()) as PublicInvoice
 }
 
-// --- Admin (bearer token kept in localStorage) ---
+// --- Admin auth (GitHub OAuth; the session is an HttpOnly cookie set by the API) ---
 
-const ADMIN_TOKEN_KEY = 'accept-payments.admin-token'
-
-export function getAdminToken(): string {
-  return localStorage.getItem(ADMIN_TOKEN_KEY) ?? ''
-}
-export function setAdminToken(token: string): void {
-  localStorage.setItem(ADMIN_TOKEN_KEY, token)
-}
-export function clearAdminToken(): void {
-  localStorage.removeItem(ADMIN_TOKEN_KEY)
-}
-
-// thrown when the admin token is missing or rejected, so the UI can show the gate
+// thrown when the session is missing or rejected, so the UI can show the gate
 export class AuthError extends Error {
   constructor() {
-    super('Admin token missing or rejected')
+    super('Not signed in')
     this.name = 'AuthError'
   }
 }
@@ -130,18 +118,18 @@ export function lineItemsTotal(items: InvoiceLineItem[]): number {
   )
 }
 
+// The session is an HttpOnly cookie, sent automatically on same-origin requests.
 async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
-  const token = getAdminToken()
-  if (!token) throw new AuthError()
   const res = await fetch(path, {
     ...init,
     headers: {
       ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      Authorization: `Bearer ${token}`,
       ...init?.headers,
     },
   })
-  if (res.status === 401 || res.status === 503) throw new AuthError()
+  if (res.status === 401 || res.status === 403 || res.status === 503) {
+    throw new AuthError()
+  }
   if (!res.ok) throw new Error(`Request failed (HTTP ${res.status})`)
   return res
 }
@@ -185,4 +173,16 @@ export async function saveSettings(settings: Settings): Promise<Settings> {
       body: JSON.stringify(settings),
     })
   ).json()
+}
+
+export interface Me {
+  login: string
+}
+
+export async function fetchMe(): Promise<Me> {
+  return (await adminFetch('/auth/me')).json()
+}
+
+export async function logout(): Promise<void> {
+  await fetch('/auth/logout', { method: 'POST' })
 }

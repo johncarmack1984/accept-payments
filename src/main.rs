@@ -3,9 +3,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use axum::{
-    extract::{Host, Path, State},
-    http::{header::AUTHORIZATION, HeaderMap},
-    response::Json,
+    extract::{Host, Path, Query, State},
+    http::{
+        header::{COOKIE, LOCATION, SET_COOKIE},
+        HeaderMap, HeaderValue,
+    },
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -18,6 +21,7 @@ use stripe::{
     CreateCheckoutSessionLineItemsPriceDataProductData, CreateCheckoutSessionPaymentMethodTypes,
     Currency, EventObject, EventType, Webhook,
 };
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use uuid::Uuid;
 
 // Item id 0 is the atomic counter that hands out sequential post ids. It
@@ -668,31 +672,238 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-// constant-time compare so a wrong token can't be teased out byte-by-byte by timing
-fn ct_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+// A signed (HS256) session cookie set after GitHub OAuth; `sub` is the login.
+#[derive(Serialize, Deserialize)]
+struct Session {
+    sub: String,
+    exp: usize,
 }
 
-fn bearer_matches(expected: &str, header: Option<&str>) -> bool {
-    header
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|token| ct_eq(token, expected))
+const SESSION_COOKIE: &str = "session";
+const STATE_COOKIE: &str = "oauth_state";
+const SESSION_TTL_SECS: i64 = 7 * 24 * 60 * 60;
+
+fn issue_session(login: &str, secret: &str) -> Option<String> {
+    let claims = Session {
+        sub: login.to_string(),
+        exp: (now_secs() + SESSION_TTL_SECS) as usize,
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .ok()
 }
 
-// Admin invoice routes require `Authorization: Bearer <ADMIN_TOKEN>`. With no
-// ADMIN_TOKEN configured the admin side is closed, not open.
+fn verify_session(token: &str, secret: &str) -> Option<String> {
+    decode::<Session>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::default(),
+    )
+    .ok()
+    .map(|data| data.claims.sub)
+}
+
+// pull a single cookie value out of the Cookie header
+fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value)
+}
+
+fn cookie_header(name: &str, value: &str, max_age: i64) -> Option<HeaderValue> {
+    HeaderValue::from_str(&format!(
+        "{name}={value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={max_age}"
+    ))
+    .ok()
+}
+
+// Admin routes require a session cookie whose login matches ADMIN_GITHUB_LOGIN.
+// Without OAuth configured the admin side is closed, not open.
 fn check_admin(headers: &HeaderMap) -> Result<(), ServerError> {
-    let expected = env_nonempty("ADMIN_TOKEN").ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "admin is not configured".to_string(),
-    ))?;
-    let header = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok());
-    if bearer_matches(&expected, header) {
+    let (Some(secret), Some(allowed)) = (
+        env_nonempty("SESSION_SECRET"),
+        env_nonempty("ADMIN_GITHUB_LOGIN"),
+    ) else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admin is not configured".to_string(),
+        ));
+    };
+    let login = cookie(headers, SESSION_COOKIE)
+        .and_then(|token| verify_session(token, &secret))
+        .ok_or((StatusCode::UNAUTHORIZED, "unauthorized".to_string()))?;
+    if login == allowed {
         Ok(())
     } else {
-        Err((StatusCode::UNAUTHORIZED, "unauthorized".to_string()))
+        Err((StatusCode::FORBIDDEN, "not authorized".to_string()))
     }
+}
+
+#[derive(Serialize)]
+struct MeResponse {
+    login: String,
+}
+
+// Tells the SPA who is signed in (or 401) so it can show the admin or the gate.
+async fn auth_me(headers: HeaderMap) -> Response {
+    match check_admin(&headers) {
+        Ok(()) => Json(MeResponse {
+            login: env_nonempty("ADMIN_GITHUB_LOGIN").unwrap_or_default(),
+        })
+        .into_response(),
+        Err((status, _)) => status.into_response(),
+    }
+}
+
+// Start the OAuth dance: redirect to GitHub with a CSRF state stashed in a
+// short-lived cookie.
+async fn auth_login(Host(host): Host) -> Response {
+    let Some(client_id) = env_nonempty("GITHUB_CLIENT_ID") else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "auth is not configured").into_response();
+    };
+    let state = Uuid::new_v4().simple().to_string();
+    let redirect_uri = format!("https://{host}/auth/github/callback");
+    let authorize = reqwest::Url::parse_with_params(
+        "https://github.com/login/oauth/authorize",
+        &[
+            ("client_id", client_id.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("scope", "read:user"),
+            ("state", state.as_str()),
+        ],
+    )
+    .map(|url| url.to_string())
+    .unwrap_or_default();
+
+    let mut headers = HeaderMap::new();
+    if let Some(value) = cookie_header(STATE_COOKIE, &state, 600) {
+        headers.insert(SET_COOKIE, value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&authorize) {
+        headers.insert(LOCATION, value);
+    }
+    (StatusCode::FOUND, headers).into_response()
+}
+
+#[derive(Deserialize)]
+struct CallbackQuery {
+    #[serde(default)]
+    code: String,
+    #[serde(default)]
+    state: String,
+}
+
+// GitHub redirects back here; verify state, exchange the code, and — if the
+// login is the admin — set the session cookie.
+async fn auth_callback(
+    headers: HeaderMap,
+    Host(host): Host,
+    Query(query): Query<CallbackQuery>,
+) -> Response {
+    let state_ok =
+        !query.state.is_empty() && cookie(&headers, STATE_COOKIE) == Some(query.state.as_str());
+    if !state_ok {
+        return finish_oauth(&host, None, Some("state"));
+    }
+
+    let (Some(client_id), Some(client_secret), Some(secret), Some(allowed)) = (
+        env_nonempty("GITHUB_CLIENT_ID"),
+        env_nonempty("GITHUB_CLIENT_SECRET"),
+        env_nonempty("SESSION_SECRET"),
+        env_nonempty("ADMIN_GITHUB_LOGIN"),
+    ) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "auth is not configured").into_response();
+    };
+
+    let Some(login) = github_login(&client_id, &client_secret, &query.code).await else {
+        return finish_oauth(&host, None, Some("github"));
+    };
+    if login != allowed {
+        return finish_oauth(&host, None, Some("forbidden"));
+    }
+    match issue_session(&login, &secret) {
+        Some(jwt) => finish_oauth(&host, Some(&jwt), None),
+        None => finish_oauth(&host, None, Some("session")),
+    }
+}
+
+// Clears the state cookie, optionally sets the session cookie, and redirects to
+// /admin (with ?error=… on failure so the SPA can explain).
+fn finish_oauth(host: &str, session: Option<&str>, error: Option<&str>) -> Response {
+    let location = match error {
+        Some(reason) => format!("https://{host}/admin?error={reason}"),
+        None => format!("https://{host}/admin"),
+    };
+    let mut headers = HeaderMap::new();
+    if let Some(value) = cookie_header(STATE_COOKIE, "", 0) {
+        headers.append(SET_COOKIE, value);
+    }
+    if let Some(jwt) = session {
+        if let Some(value) = cookie_header(SESSION_COOKIE, jwt, SESSION_TTL_SECS) {
+            headers.append(SET_COOKIE, value);
+        }
+    }
+    if let Ok(value) = HeaderValue::from_str(&location) {
+        headers.insert(LOCATION, value);
+    }
+    (StatusCode::FOUND, headers).into_response()
+}
+
+async fn auth_logout() -> Response {
+    let mut headers = HeaderMap::new();
+    if let Some(value) = cookie_header(SESSION_COOKIE, "", 0) {
+        headers.insert(SET_COOKIE, value);
+    }
+    (StatusCode::OK, headers).into_response()
+}
+
+async fn github_login(client_id: &str, client_secret: &str, code: &str) -> Option<String> {
+    let client = reqwest::Client::new();
+
+    #[derive(Deserialize)]
+    struct TokenResponse {
+        access_token: String,
+    }
+    let token: TokenResponse = client
+        .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("code", code),
+        ])
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    #[derive(Deserialize)]
+    struct GithubUser {
+        login: String,
+    }
+    let user: GithubUser = client
+        .get("https://api.github.com/user")
+        .header("Authorization", format!("Bearer {}", token.access_token))
+        .header("User-Agent", "accept-payments")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    Some(user.login)
 }
 
 fn validate_line_items(line_items: &[LineItem]) -> Result<(), ServerError> {
@@ -886,7 +1097,11 @@ async fn main() -> Result<(), Error> {
         .route("/invoices", post(create_invoice).get(list_invoices))
         .route("/invoices/:id", get(get_invoice).patch(update_invoice))
         .route("/invoice/:token", get(public_invoice))
-        .route("/settings", get(get_settings).put(update_settings));
+        .route("/settings", get(get_settings).put(update_settings))
+        .route("/auth/github/login", get(auth_login))
+        .route("/auth/github/callback", get(auth_callback))
+        .route("/auth/me", get(auth_me))
+        .route("/auth/logout", post(auth_logout));
 
     // With the `embed-web` feature the built SPA is baked into the binary and
     // served for any non-API path (client routes fall back to index.html).
@@ -1114,18 +1329,20 @@ mod tests {
     }
 
     #[test]
-    fn bearer_token_is_checked() {
-        assert!(bearer_matches("s3cret", Some("Bearer s3cret")));
-        assert!(!bearer_matches("s3cret", Some("Bearer nope")));
-        assert!(!bearer_matches("s3cret", Some("s3cret"))); // missing "Bearer " prefix
-        assert!(!bearer_matches("s3cret", None));
+    fn session_round_trips_and_rejects_tampering() {
+        let token = issue_session("octocat", "s3cret").unwrap();
+        assert_eq!(verify_session(&token, "s3cret").as_deref(), Some("octocat"));
+        // a different signing key is rejected
+        assert!(verify_session(&token, "other").is_none());
+        // garbage is rejected
+        assert!(verify_session("not-a-jwt", "s3cret").is_none());
     }
 
     #[test]
-    fn constant_time_eq_matches_only_equal_strings() {
-        assert!(ct_eq("abc", "abc"));
-        assert!(!ct_eq("abc", "abd"));
-        assert!(!ct_eq("abc", "abcd"));
-        assert!(!ct_eq("", "x"));
+    fn cookie_is_parsed_from_the_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(COOKIE, "a=1; session=abc; b=2".parse().unwrap());
+        assert_eq!(cookie(&headers, "session"), Some("abc"));
+        assert_eq!(cookie(&headers, "missing"), None);
     }
 }
