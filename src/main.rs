@@ -134,6 +134,16 @@ struct PublicInvoice {
     remit_to: Option<String>,
 }
 
+// Merchant profile shown on every invoice — editable via the admin UI, not a
+// deploy-time env var, so the business name and pay-to details can change
+// without a redeploy. Stored as a singleton item (id "settings") in the
+// invoices table.
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct Settings {
+    business_name: Option<String>,
+    remit_to: Option<String>,
+}
+
 type ServerError = (StatusCode, String);
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -309,6 +319,38 @@ impl Db {
 
         invoices.sort_by_key(|invoice| std::cmp::Reverse(invoice.number));
         Ok(invoices)
+    }
+
+    async fn fetch_settings(&self) -> Result<Settings, ServerError> {
+        let item = self
+            .client
+            .get_item()
+            .table_name(&self.invoices_table)
+            .key("id", AttributeValue::S("settings".to_string()))
+            .send()
+            .await
+            .map_err(internal_server_error)?;
+        // absent or unparseable settings fall back to empty defaults
+        let settings = item
+            .item()
+            .and_then(|item| item.get("data"))
+            .and_then(|value| value.as_s().ok())
+            .and_then(|data| serde_json::from_str(data).ok())
+            .unwrap_or_default();
+        Ok(settings)
+    }
+
+    async fn put_settings(&self, settings: &Settings) -> Result<(), ServerError> {
+        let data = serde_json::to_string(settings).map_err(internal_server_error)?;
+        self.client
+            .put_item()
+            .table_name(&self.invoices_table)
+            .item("id", AttributeValue::S("settings".to_string()))
+            .item("data", AttributeValue::S(data))
+            .send()
+            .await
+            .map_err(internal_server_error)?;
+        Ok(())
     }
 }
 
@@ -746,7 +788,26 @@ async fn update_invoice(
     Ok(Json(invoice))
 }
 
-// Public, token-gated: the page a client opens to view and pay the invoice.
+async fn get_settings(
+    headers: HeaderMap,
+    State(db): State<Db>,
+) -> Result<Json<Settings>, ServerError> {
+    check_admin(&headers)?;
+    Ok(Json(db.fetch_settings().await?))
+}
+
+async fn update_settings(
+    headers: HeaderMap,
+    State(db): State<Db>,
+    Json(settings): Json<Settings>,
+) -> Result<Json<Settings>, ServerError> {
+    check_admin(&headers)?;
+    db.put_settings(&settings).await?;
+    Ok(Json(settings))
+}
+
+// Public, token-gated: the page a client opens to view and pay the invoice. The
+// merchant profile (business name + remit-to) comes from admin-managed settings.
 async fn public_invoice(
     State(db): State<Db>,
     Path(token): Path<String>,
@@ -755,6 +816,7 @@ async fn public_invoice(
         .fetch_invoice(&token)
         .await?
         .ok_or((StatusCode::NOT_FOUND, "invoice not found".to_string()))?;
+    let settings = db.fetch_settings().await?;
 
     Ok(Json(PublicInvoice {
         number: invoice.number,
@@ -767,8 +829,8 @@ async fn public_invoice(
         issued_at: invoice.issued_at,
         due_at: invoice.due_at,
         paid_at: invoice.paid_at,
-        business_name: env_nonempty("BUSINESS_NAME"),
-        remit_to: env_nonempty("REMIT_TO"),
+        business_name: settings.business_name,
+        remit_to: settings.remit_to,
     }))
 }
 
@@ -823,7 +885,8 @@ async fn main() -> Result<(), Error> {
         .route("/webhooks/stripe", post(stripe_webhook))
         .route("/invoices", post(create_invoice).get(list_invoices))
         .route("/invoices/:id", get(get_invoice).patch(update_invoice))
-        .route("/invoice/:token", get(public_invoice));
+        .route("/invoice/:token", get(public_invoice))
+        .route("/settings", get(get_settings).put(update_settings));
 
     // With the `embed-web` feature the built SPA is baked into the binary and
     // served for any non-API path (client routes fall back to index.html).
@@ -1031,6 +1094,23 @@ mod tests {
             ("next_number".to_string(), AttributeValue::N("8".to_string())),
         ]);
         assert!(item_to_invoice(&counter).is_none());
+    }
+
+    #[test]
+    fn settings_item_is_not_an_invoice() {
+        // the settings singleton shares the invoices table; a scan must skip it
+        let settings = Settings {
+            business_name: Some("Acme LLC".to_string()),
+            remit_to: Some("ACH …".to_string()),
+        };
+        let item = HashMap::from([
+            ("id".to_string(), AttributeValue::S("settings".to_string())),
+            (
+                "data".to_string(),
+                AttributeValue::S(serde_json::to_string(&settings).unwrap()),
+            ),
+        ]);
+        assert!(item_to_invoice(&item).is_none());
     }
 
     #[test]

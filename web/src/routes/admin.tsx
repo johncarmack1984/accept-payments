@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
-import { Ban, Check, Copy, Plus, X } from 'lucide-react'
+import { Ban, Check, Copy, Plus, Settings as SettingsIcon, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,11 +20,13 @@ import {
   AuthError,
   clearAdminToken,
   createInvoice,
+  fetchSettings,
   formatDate,
   getAdminToken,
   lineItemsTotal,
   listInvoices,
   money,
+  saveSettings,
   setAdminToken,
   setInvoiceStatus,
   type Invoice,
@@ -126,6 +128,7 @@ function Dashboard({
   const [invoices, setInvoices] = useState<Invoice[] | null>(null)
   const [error, setError] = useState<string>()
   const [creating, setCreating] = useState(false)
+  const [editingSettings, setEditingSettings] = useState(false)
 
   const handleError = useCallback(
     (err: unknown) => {
@@ -163,11 +166,26 @@ function Dashboard({
           <Button size="sm" onClick={() => setCreating((open) => !open)}>
             <Plus /> New invoice
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setEditingSettings((open) => !open)}
+          >
+            <SettingsIcon /> Settings
+          </Button>
           <Button size="sm" variant="ghost" onClick={onSignOut}>
             Sign out
           </Button>
         </div>
       </div>
+
+      {editingSettings ? (
+        <SettingsForm
+          onCancel={() => setEditingSettings(false)}
+          onSaved={() => setEditingSettings(false)}
+          onError={handleError}
+        />
+      ) : null}
 
       {creating ? (
         <CreateInvoiceForm
@@ -471,5 +489,91 @@ function FormField({ label, children }: { label: string; children: ReactNode }) 
       <Label>{label}</Label>
       {children}
     </div>
+  )
+}
+
+function SettingsForm({
+  onSaved,
+  onCancel,
+  onError,
+}: {
+  onSaved: () => void
+  onCancel: () => void
+  onError: (err: unknown) => void
+}) {
+  const [businessName, setBusinessName] = useState('')
+  const [remitTo, setRemitTo] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    fetchSettings()
+      .then((settings) => {
+        if (active) {
+          setBusinessName(settings.business_name ?? '')
+          setRemitTo(settings.remit_to ?? '')
+          setLoaded(true)
+        }
+      })
+      .catch((err) => {
+        if (active) onError(err)
+      })
+    return () => {
+      active = false
+    }
+  }, [onError])
+
+  async function save() {
+    setSaving(true)
+    try {
+      await saveSettings({
+        business_name: businessName.trim() || null,
+        remit_to: remitTo.trim() || null,
+      })
+      onSaved()
+    } catch (err) {
+      onError(err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void save()
+          }}
+        >
+          <FormField label="Business name">
+            <Input
+              value={businessName}
+              onChange={(event) => setBusinessName(event.target.value)}
+              placeholder="Your name or LLC"
+            />
+          </FormField>
+          <FormField label="How clients pay you — shown on every invoice">
+            <Textarea
+              rows={4}
+              value={remitTo}
+              onChange={(event) => setRemitTo(event.target.value)}
+              placeholder={'ACH — routing … · account …\nWire — …\nCheck — …'}
+            />
+          </FormField>
+          <div className="flex justify-end gap-2 border-t pt-4">
+            <Button type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!loaded || saving}>
+              {saving ? 'Saving…' : 'Save settings'}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   )
 }

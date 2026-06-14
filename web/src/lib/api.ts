@@ -167,3 +167,22 @@ export async function setInvoiceStatus(
     })
   ).json()
 }
+
+// Merchant profile shown on invoices — admin-editable, not a deploy env var.
+export interface Settings {
+  business_name: string | null
+  remit_to: string | null
+}
+
+export async function fetchSettings(): Promise<Settings> {
+  return (await adminFetch('/settings')).json()
+}
+
+export async function saveSettings(settings: Settings): Promise<Settings> {
+  return (
+    await adminFetch('/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    })
+  ).json()
+}

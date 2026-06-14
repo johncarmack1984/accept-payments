@@ -33,10 +33,9 @@ jobs:
         working-directory: web
       - run: pip3 install cargo-lambda
       - run: cargo lambda build --release --arm64 --features embed-web
-      # secret/value env vars are passed via `env:` and referenced as quoted
-      # shell vars below, so spaces (BUSINESS_NAME) and newlines (REMIT_TO)
-      # survive intact. Unset secrets become empty -> the Lambda treats them as
-      # absent (admin routes 503, remit-to omitted) rather than breaking.
+      # ADMIN_TOKEN is passed via `env:` and a quoted shell var below; an unset
+      # secret becomes empty, which the Lambda treats as "admin not configured"
+      # (admin routes 503) rather than breaking the deploy.
       - run: >-
           cargo lambda deploy accept-payments --enable-function-url
           --env-var DB_TABLE=accept-payments-posts
@@ -45,8 +44,6 @@ jobs:
           --env-var STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
           --env-var STRIPE_WEBHOOK_SECRET="$STRIPE_WEBHOOK_SECRET"
           --env-var ADMIN_TOKEN="$ADMIN_TOKEN"
-          --env-var BUSINESS_NAME="$BUSINESS_NAME"
-          --env-var REMIT_TO="$REMIT_TO"
         env:
           AWS_DEFAULT_REGION: us-west-1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -54,5 +51,3 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          BUSINESS_NAME: ${{ secrets.BUSINESS_NAME }}
-          REMIT_TO: ${{ secrets.REMIT_TO }}
