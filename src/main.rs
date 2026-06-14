@@ -454,6 +454,34 @@ fn internal_server_error<E: std::error::Error>(err: E) -> ServerError {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
 
+// The web/ SPA is embedded at build time (feature `embed-web`) and served for
+// any path the API routes don't claim. Unknown paths return index.html so the
+// client-side router can resolve deep links like /success.
+#[cfg(feature = "embed-web")]
+#[derive(rust_embed::RustEmbed)]
+#[folder = "web/dist"]
+struct WebAssets;
+
+#[cfg(feature = "embed-web")]
+async fn serve_spa(uri: axum::http::Uri) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    match WebAssets::get(path).or_else(|| WebAssets::get("index.html")) {
+        Some(file) => {
+            let content_type = file.metadata.mimetype().to_owned();
+            (
+                [(axum::http::header::CONTENT_TYPE, content_type)],
+                file.data.into_owned(),
+            )
+                .into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // required to enable CloudWatch error logging by the runtime
@@ -470,8 +498,14 @@ async fn main() -> Result<(), Error> {
         .route("/checkout", post(create_checkout))
         .route("/sessions/:id", get(get_session))
         .route("/payments", get(list_payments))
-        .route("/webhooks/stripe", post(stripe_webhook))
-        .with_state(db);
+        .route("/webhooks/stripe", post(stripe_webhook));
+
+    // With the `embed-web` feature the built SPA is baked into the binary and
+    // served for any non-API path (client routes fall back to index.html).
+    #[cfg(feature = "embed-web")]
+    let app = app.fallback(serve_spa);
+
+    let app = app.with_state(db);
 
     run(app).await
 }

@@ -15,6 +15,13 @@ lambda_runtime = "0.11.1"
 serde = "1.0.196"
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros"] }
+# optional: bake the built web/dist SPA into the binary. CI builds the SPA, then
+# `cargo lambda build --features embed-web`. Off by default so `cargo test` and
+# local builds don't require a web build.
+rust-embed = { version = "8", features = ["mime-guess"], optional = true }
+
+[features]
+embed-web = ["dep:rust-embed"]
 
 [profile.release]
 codegen-units = 16

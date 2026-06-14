@@ -19,13 +19,12 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // The SPA calls /api/* → the Rust Lambda. Run `cargo lambda watch` for a
-      // local backend, or set API_PROXY_TARGET to a deployed URL. Proxying keeps
-      // the browser same-origin, so there's no CORS to configure in dev.
-      '/api': {
+      // The SPA calls /sessions/:id same-origin; in dev, forward it to the Rust
+      // Lambda (cargo lambda watch, or API_PROXY_TARGET). In production the
+      // Lambda serves the SPA, so the same path is already same-origin.
+      '/sessions': {
         target: process.env.API_PROXY_TARGET ?? 'http://localhost:9000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },

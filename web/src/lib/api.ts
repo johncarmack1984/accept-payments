@@ -15,7 +15,7 @@ export function isPaymentStatus(value: unknown): value is PaymentStatus {
 }
 
 export async function fetchSession(sessionId: string): Promise<SessionStatus> {
-  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`)
+  const res = await fetch(`/sessions/${encodeURIComponent(sessionId)}`)
   if (!res.ok) {
     throw new Error(`Receipt lookup failed (HTTP ${res.status})`)
   }
