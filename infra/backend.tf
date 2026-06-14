@@ -1,4 +1,10 @@
 terraform {
+  required_providers {
+    github = {
+      source  = "integrations/github"
+      version = "~> 6.0"
+    }
+  }
   backend "s3" {
     bucket       = "john-carmack-terraform-state"
     key          = "accept-payments/terraform.tfstate"
