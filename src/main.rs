@@ -766,7 +766,7 @@ async fn auth_me(headers: HeaderMap) -> Response {
 // Start the OAuth dance: redirect to GitHub with a CSRF state stashed in a
 // short-lived cookie.
 async fn auth_login(Host(host): Host) -> Response {
-    let Some(client_id) = env_nonempty("GITHUB_CLIENT_ID") else {
+    let Some(client_id) = env_nonempty("OAUTH_CLIENT_ID") else {
         return (StatusCode::SERVICE_UNAVAILABLE, "auth is not configured").into_response();
     };
     let state = Uuid::new_v4().simple().to_string();
@@ -815,8 +815,8 @@ async fn auth_callback(
     }
 
     let (Some(client_id), Some(client_secret), Some(secret), Some(allowed)) = (
-        env_nonempty("GITHUB_CLIENT_ID"),
-        env_nonempty("GITHUB_CLIENT_SECRET"),
+        env_nonempty("OAUTH_CLIENT_ID"),
+        env_nonempty("OAUTH_CLIENT_SECRET"),
         env_nonempty("SESSION_SECRET"),
         env_nonempty("ADMIN_GITHUB_LOGIN"),
     ) else {

@@ -44,8 +44,8 @@ jobs:
           --env-var INVOICES_TABLE=accept-payments-invoices
           --env-var STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
           --env-var STRIPE_WEBHOOK_SECRET="$STRIPE_WEBHOOK_SECRET"
-          --env-var GITHUB_CLIENT_ID=${{ vars.GITHUB_CLIENT_ID }}
-          --env-var GITHUB_CLIENT_SECRET="$GITHUB_CLIENT_SECRET"
+          --env-var OAUTH_CLIENT_ID=${{ vars.OAUTH_CLIENT_ID }}
+          --env-var OAUTH_CLIENT_SECRET="$OAUTH_CLIENT_SECRET"
           --env-var SESSION_SECRET="$SESSION_SECRET"
           --env-var ADMIN_GITHUB_LOGIN=${{ vars.ADMIN_GITHUB_LOGIN }}
         env:
@@ -54,5 +54,5 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
