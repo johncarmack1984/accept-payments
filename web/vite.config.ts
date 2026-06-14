@@ -26,6 +26,11 @@ export default defineConfig({
         target: process.env.API_PROXY_TARGET ?? 'http://localhost:9000',
         changeOrigin: true,
       },
+      // '/invoice' also matches the admin '/invoices' paths (prefix match)
+      '/invoice': {
+        target: process.env.API_PROXY_TARGET ?? 'http://localhost:9000',
+        changeOrigin: true,
+      },
     },
   },
 })

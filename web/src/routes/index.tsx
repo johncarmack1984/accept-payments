@@ -53,6 +53,22 @@ function Home() {
             >
               Cancel
             </Link>
+            <Link
+              to="/i/$token"
+              params={{ token: 'demo' }}
+              search={{ demo: 'open' }}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+            >
+              Invoice
+            </Link>
+            <Link
+              to="/i/$token"
+              params={{ token: 'demo' }}
+              search={{ demo: 'paid' }}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+            >
+              Invoice · paid
+            </Link>
           </div>
         ) : null}
       </div>

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SuccessRouteImport } from './routes/success'
 import { Route as CancelRouteImport } from './routes/cancel'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ITokenRouteImport } from './routes/i.$token'
 
 const SuccessRoute = SuccessRouteImport.update({
   id: '/success',
@@ -28,35 +29,44 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ITokenRoute = ITokenRouteImport.update({
+  id: '/i/$token',
+  path: '/i/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cancel': typeof CancelRoute
   '/success': typeof SuccessRoute
+  '/i/$token': typeof ITokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cancel': typeof CancelRoute
   '/success': typeof SuccessRoute
+  '/i/$token': typeof ITokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/cancel': typeof CancelRoute
   '/success': typeof SuccessRoute
+  '/i/$token': typeof ITokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/cancel' | '/success'
+  fullPaths: '/' | '/cancel' | '/success' | '/i/$token'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/cancel' | '/success'
-  id: '__root__' | '/' | '/cancel' | '/success'
+  to: '/' | '/cancel' | '/success' | '/i/$token'
+  id: '__root__' | '/' | '/cancel' | '/success' | '/i/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CancelRoute: typeof CancelRoute
   SuccessRoute: typeof SuccessRoute
+  ITokenRoute: typeof ITokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/i/$token': {
+      id: '/i/$token'
+      path: '/i/$token'
+      fullPath: '/i/$token'
+      preLoaderRoute: typeof ITokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CancelRoute: CancelRoute,
   SuccessRoute: SuccessRoute,
+  ITokenRoute: ITokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
