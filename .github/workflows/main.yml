@@ -8,6 +8,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Least privilege for GITHUB_TOKEN: the job only checks out code to build and
+# deploy to AWS (via AWS creds in secrets, not GITHUB_TOKEN) — it never writes
+# back to the repo, so read access to contents is all it needs.
+permissions:
+  contents: read
+
 jobs:
   release:
     runs-on: ubuntu-latest
