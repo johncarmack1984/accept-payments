@@ -4,11 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# "full" matches the crate's default resource set — webhook-events fails to
-# compile against narrower feature combinations (missing cross-resource types)
-async-stripe = { version = "0.41", default-features = false, features = ["runtime-tokio-hyper-rustls", "full", "webhook-events"] }
+# Stripe via async-stripe 1.0-rc (split into per-resource crates). hyper +
+# rustls-aws-lc-rs is a modern TLS stack (rustls 0.23 / webpki 0.103) that reuses
+# the aws-lc-rs provider the AWS SDK already pulls; this drops the legacy
+# rustls 0.21 / webpki 0.101 + http-types/rand 0.7 that async-stripe 0.41 dragged
+# in (Dependabot RUSTSEC alerts).
+async-stripe = { version = "=1.0.0-rc.6", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-aws-lc-rs"] }
+async-stripe-checkout = { version = "=1.0.0-rc.6", features = ["checkout_session"] }
+async-stripe-shared = "=1.0.0-rc.6"
+async-stripe-types = "=1.0.0-rc.6"
+async-stripe-webhook = { version = "=1.0.0-rc.6", features = ["async-stripe-checkout"] }
+# install aws-lc-rs as the process-default rustls CryptoProvider so async-stripe's
+# rustls 0.23 TLS resolves a provider unambiguously at runtime
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 aws-config = "1"
-aws-sdk-dynamodb = "1"
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 axum = "0.7"
 lambda_http = "0.11.1"
 lambda_runtime = "0.11.1"
@@ -18,7 +28,9 @@ tokio = { version = "1", features = ["macros"] }
 uuid = { version = "1", features = ["v4"] }
 # GitHub OAuth: reqwest calls the GitHub API; jsonwebtoken signs the session cookie
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-jsonwebtoken = "9"
+# v10 requires picking a crypto provider; rust_crypto is pure-Rust (HS256 only,
+# via from_secret) and avoids aws-lc-sys's C build under the zig cross-linker.
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 # optional: bake the built web/dist SPA into the binary. CI builds the SPA, then
 # `cargo lambda build --features embed-web`. Off by default so `cargo test` and
 # local builds don't require a web build.

@@ -14,13 +14,16 @@ use axum::{
 };
 use lambda_http::{http::StatusCode, run, tracing, Error};
 use serde::{Deserialize, Serialize};
-use stripe::{
-    CheckoutSession, CheckoutSessionId, CheckoutSessionMode, CheckoutSessionPaymentStatus,
-    Client as StripeClient,
-    CreateCheckoutSession, CreateCheckoutSessionLineItems, CreateCheckoutSessionLineItemsPriceData,
-    CreateCheckoutSessionLineItemsPriceDataProductData, CreateCheckoutSessionPaymentMethodTypes,
-    Currency, EventObject, EventType, Webhook,
+use stripe::Client as StripeClient;
+use stripe_checkout::checkout_session::{
+    CreateCheckoutSession, CreateCheckoutSessionLineItems,
+    CreateCheckoutSessionLineItemsPriceData, CreateCheckoutSessionPaymentMethodTypes, ProductData,
+    RetrieveCheckoutSession,
 };
+use stripe_checkout::CheckoutSessionMode;
+use stripe_shared::{CheckoutSession, CheckoutSessionPaymentStatus};
+use stripe_types::Currency;
+use stripe_webhook::{EventObject, EventType, Webhook};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use uuid::Uuid;
 
@@ -215,6 +218,7 @@ impl Db {
     ) -> Result<(), ServerError> {
         let currency = session
             .currency
+            .as_ref()
             .map(|currency| currency.to_string())
             .unwrap_or_else(|| "usd".to_string());
 
@@ -497,31 +501,28 @@ async fn create_checkout(
     let success_url = format!("{web_origin}/success?session_id={{CHECKOUT_SESSION_ID}}");
     let cancel_url = format!("{web_origin}/cancel");
 
-    let mut params = CreateCheckoutSession::new();
-    params.mode = Some(CheckoutSessionMode::Payment);
     // ACH debit runs 0.8% capped at $5 vs 2.9% + 30¢ for cards; offer both
     // and let the customer pick
-    params.payment_method_types = Some(vec![
-        CreateCheckoutSessionPaymentMethodTypes::Card,
-        CreateCheckoutSessionPaymentMethodTypes::UsBankAccount,
-    ]);
-    params.success_url = Some(&success_url);
-    params.cancel_url = Some(&cancel_url);
-    params.line_items = Some(vec![CreateCheckoutSessionLineItems {
+    let line_item = CreateCheckoutSessionLineItems {
         quantity: Some(1),
         price_data: Some(CreateCheckoutSessionLineItemsPriceData {
-            currency: Currency::USD,
             unit_amount: Some(checkout.amount_cents),
-            product_data: Some(CreateCheckoutSessionLineItemsPriceDataProductData {
-                name: checkout.description.clone(),
-                ..Default::default()
-            }),
-            ..Default::default()
+            product_data: Some(ProductData::new(checkout.description.clone())),
+            ..CreateCheckoutSessionLineItemsPriceData::new(Currency::USD)
         }),
         ..Default::default()
-    }]);
+    };
 
-    let session = CheckoutSession::create(stripe, params)
+    let session = CreateCheckoutSession::new()
+        .mode(CheckoutSessionMode::Payment)
+        .payment_method_types(vec![
+            CreateCheckoutSessionPaymentMethodTypes::Card,
+            CreateCheckoutSessionPaymentMethodTypes::UsBankAccount,
+        ])
+        .success_url(success_url)
+        .cancel_url(cancel_url)
+        .line_items(vec![line_item])
+        .send(stripe)
         .await
         .map_err(internal_server_error)?;
     let url = session.url.clone().ok_or((
@@ -555,25 +556,22 @@ async fn get_session(
         "payments are not configured".to_string(),
     ))?;
 
-    let id = id
-        .parse::<CheckoutSessionId>()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid session id".to_string()))?;
-
-    let session = CheckoutSession::retrieve(stripe, &id, &[])
+    let session = RetrieveCheckoutSession::new(id.as_str())
+        .send(stripe)
         .await
         .map_err(internal_server_error)?;
 
     Ok(Json(SessionStatus {
         id: session.id.to_string(),
-        payment_status: payment_status_str(session.payment_status),
+        payment_status: payment_status_str(&session.payment_status),
         amount_total: session.amount_total,
-        currency: session.currency.map(|currency| currency.to_string()),
+        currency: session.currency.as_ref().map(|currency| currency.to_string()),
     }))
 }
 
 // Cards settle inside the session (paid); ACH debits land unpaid and settle
 // days later. The frontend keys its receipt messaging on this.
-fn payment_status_str(status: CheckoutSessionPaymentStatus) -> &'static str {
+fn payment_status_str(status: &CheckoutSessionPaymentStatus) -> &'static str {
     match status {
         CheckoutSessionPaymentStatus::Paid => "paid",
         CheckoutSessionPaymentStatus::Unpaid => "unpaid",
@@ -602,16 +600,23 @@ async fn stripe_webhook(
     let event = Webhook::construct_event(&body, signature, secret)
         .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    if let EventObject::CheckoutSession(session) = event.data.object {
-        if recordable(event.type_, &session) {
-            db.record_payment(event.id.as_str(), &session).await?;
-        } else if event.type_ == EventType::CheckoutSessionAsyncPaymentFailed {
-            // the debit bounced; nothing was recorded, but leave a trail
-            tracing::warn!(session = %session.id, "async payment failed");
-        }
+    // 1.0 gives each checkout.session.* event its own EventObject variant (each
+    // still carrying the session); pull the session out of the ones we act on.
+    // Unhandled event types are acknowledged so Stripe stops retrying them.
+    let session = match event.data.object {
+        EventObject::CheckoutSessionCompleted(session)
+        | EventObject::CheckoutSessionAsyncPaymentSucceeded(session)
+        | EventObject::CheckoutSessionAsyncPaymentFailed(session) => session,
+        _ => return Ok(StatusCode::OK),
+    };
+
+    if recordable(&event.type_, &session.payment_status) {
+        db.record_payment(event.id.as_str(), &session).await?;
+    } else if event.type_ == EventType::CheckoutSessionAsyncPaymentFailed {
+        // the debit bounced; nothing was recorded, but leave a trail
+        tracing::warn!(session = %session.id, "async payment failed");
     }
 
-    // unhandled event types are acknowledged so Stripe stops retrying them
     Ok(StatusCode::OK)
 }
 
@@ -619,11 +624,11 @@ async fn stripe_webhook(
 // debits complete the session Unpaid and settle days later via
 // async_payment_succeeded — payment_status, not the event type, decides
 // whether money actually moved.
-fn recordable(event_type: EventType, session: &CheckoutSession) -> bool {
+fn recordable(event_type: &EventType, payment_status: &CheckoutSessionPaymentStatus) -> bool {
     matches!(
         event_type,
         EventType::CheckoutSessionCompleted | EventType::CheckoutSessionAsyncPaymentSucceeded
-    ) && session.payment_status == CheckoutSessionPaymentStatus::Paid
+    ) && *payment_status == CheckoutSessionPaymentStatus::Paid
 }
 
 async fn list_payments(State(db): State<Db>) -> Result<Json<Vec<Payment>>, ServerError> {
@@ -1082,6 +1087,10 @@ async fn main() -> Result<(), Error> {
     // required to enable CloudWatch error logging by the runtime
     tracing::init_default_subscriber();
 
+    // async-stripe's rustls 0.23 needs a process-default CryptoProvider selected;
+    // use aws-lc-rs (already pulled by the AWS SDK). Ignore the Err if one is set.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let db = Db::new().await;
 
     // Set up the API routes
@@ -1170,43 +1179,40 @@ mod tests {
         assert!(item_to_payment(&incomplete).is_none());
     }
 
-    fn session_with_status(status: CheckoutSessionPaymentStatus) -> CheckoutSession {
-        CheckoutSession {
-            payment_status: status,
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn card_payment_records_on_completed() {
-        let paid = session_with_status(CheckoutSessionPaymentStatus::Paid);
-        assert!(recordable(EventType::CheckoutSessionCompleted, &paid));
+        assert!(recordable(
+            &EventType::CheckoutSessionCompleted,
+            &CheckoutSessionPaymentStatus::Paid
+        ));
     }
 
     #[test]
     fn ach_records_only_when_money_lands() {
         // completed fires when the customer commits, before the debit clears
-        let in_flight = session_with_status(CheckoutSessionPaymentStatus::Unpaid);
-        assert!(!recordable(EventType::CheckoutSessionCompleted, &in_flight));
-
-        // settlement arrives days later on async_payment_succeeded
-        let settled = session_with_status(CheckoutSessionPaymentStatus::Paid);
-        assert!(recordable(
-            EventType::CheckoutSessionAsyncPaymentSucceeded,
-            &settled
+        assert!(!recordable(
+            &EventType::CheckoutSessionCompleted,
+            &CheckoutSessionPaymentStatus::Unpaid
         ));
 
-        let bounced = session_with_status(CheckoutSessionPaymentStatus::Unpaid);
+        // settlement arrives days later on async_payment_succeeded
+        assert!(recordable(
+            &EventType::CheckoutSessionAsyncPaymentSucceeded,
+            &CheckoutSessionPaymentStatus::Paid
+        ));
+
         assert!(!recordable(
-            EventType::CheckoutSessionAsyncPaymentFailed,
-            &bounced
+            &EventType::CheckoutSessionAsyncPaymentFailed,
+            &CheckoutSessionPaymentStatus::Unpaid
         ));
     }
 
     #[test]
     fn free_sessions_never_hit_the_ledger() {
-        let free = session_with_status(CheckoutSessionPaymentStatus::NoPaymentRequired);
-        assert!(!recordable(EventType::CheckoutSessionCompleted, &free));
+        assert!(!recordable(
+            &EventType::CheckoutSessionCompleted,
+            &CheckoutSessionPaymentStatus::NoPaymentRequired
+        ));
     }
 
     // A real checkout.session.async_payment_succeeded event captured from Stripe
@@ -1219,16 +1225,23 @@ mod tests {
     // once the signature checks out.
     #[test]
     fn real_async_payment_event_deserializes_and_records() {
+        // Sign the captured fixture with a test secret and run it back through the
+        // real verifier — exercising signature check + parse, exactly the path the
+        // handler takes once Stripe's signature checks out.
         let body = include_str!("../tests/fixtures/ach_async_payment_succeeded.json");
-        let event: stripe::Event = serde_json::from_str(body).expect("event deserializes");
+        let secret = "whsec_test";
+        let ts = 1_781_318_961; // the fixture's own `created`, so the timestamp check passes
+        let sig = Webhook::generate_test_header(body, secret, Some(ts));
+        let event = Webhook::construct_event_with_timestamp(body, &sig, secret, ts)
+            .expect("signed event verifies and parses");
 
         assert_eq!(event.type_, EventType::CheckoutSessionAsyncPaymentSucceeded);
 
-        let EventObject::CheckoutSession(session) = event.data.object else {
+        let EventObject::CheckoutSessionAsyncPaymentSucceeded(session) = event.data.object else {
             panic!("async_payment_succeeded should carry a checkout.session object");
         };
         assert_eq!(session.payment_status, CheckoutSessionPaymentStatus::Paid);
-        assert!(recordable(event.type_, &session));
+        assert!(recordable(&event.type_, &session.payment_status));
     }
 
     #[test]
@@ -1243,9 +1256,9 @@ mod tests {
 
     #[test]
     fn payment_status_maps_to_stable_strings() {
-        assert_eq!(payment_status_str(CheckoutSessionPaymentStatus::Paid), "paid");
+        assert_eq!(payment_status_str(&CheckoutSessionPaymentStatus::Paid), "paid");
         assert_eq!(
-            payment_status_str(CheckoutSessionPaymentStatus::Unpaid),
+            payment_status_str(&CheckoutSessionPaymentStatus::Unpaid),
             "unpaid"
         );
     }
