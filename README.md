@@ -75,8 +75,4 @@ cargo test
 
 ## Scope and honesty
 
-A personal project, not a production processor: Stripe test mode, a single-admin
-model, and DynamoDB `scan`s where a real ledger would page or index. The point is
-the seams that are easy to get wrong — webhook idempotency, ACH settlement
-timing, signed sessions — handled and unit-tested (including a real captured
-Stripe event), not a checkout button that calls the API and hopes.
+A personal project, not a hardened production processor: a single-admin model and DynamoDB `scan`s where a real ledger would page or index. The Stripe integration is mode-agnostic — it runs against whichever secret key you supply (`sk_test_…` by default for the sandbox, `sk_live_…` for real charges, no code change). The point is the seams that are easy to get wrong — webhook idempotency, ACH settlement timing, signed sessions — handled and unit-tested (including a real captured Stripe event), not a checkout button that calls the API and hopes.
