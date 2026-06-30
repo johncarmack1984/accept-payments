@@ -18,7 +18,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # keep in sync with rust-toolchain.toml — this action's RUSTUP_TOOLCHAIN
       # env overrides the file, so an unpinned channel here is what actually builds
