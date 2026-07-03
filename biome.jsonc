@@ -1,0 +1,117 @@
+{
+  // One lint/format layer for the repo (replaced the Vite-scaffold eslint set).
+  // Root config; biome discovers it upward, so `bun run lint` in web/ finds it.
+  // Must stay .jsonc — biome silently ignores a biome.json with comments.
+  // Formatter matches the style the tree already had (shadcn house style:
+  // double quotes, no semicolons, es5 trailing commas, 2-space indent, 80
+  // cols) so adopting biome didn't reformat the world.
+  "$schema": "https://biomejs.dev/schemas/2.5.2/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    // Excluded explicitly: routeTree.gen.ts is TanStack Router codegen (churns
+    // on regen), index.css is tailwind v4 at-rules the CSS parser can't read
+    // yet (@custom-variant, @theme inline), public/ is static assets.
+    "includes": ["**", "!web/src/routeTree.gen.ts", "!web/src/index.css", "!web/public"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 80
+  },
+  "linter": {
+    "enabled": true,
+    // Coverage vs the retired eslint set: js/tseslint recommended → biome
+    // recommended; react-hooks rules-of-hooks/exhaustive-deps →
+    // correctness/useHookAtTopLevel + useExhaustiveDependencies (on via the
+    // auto-detected react domain — verified firing); react-refresh
+    // only-export-components → style/useComponentExportOnlyModules below
+    // (not on by default), allowConstantExport matching the vite preset.
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        "useComponentExportOnlyModules": {
+          "level": "warn",
+          "options": { "allowConstantExport": true }
+        }
+      },
+      "suspicious": {
+        "noConsole": { "level": "off", "options": { "allow": ["log"] } }
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "asNeeded",
+      "trailingCommas": "es5"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  // Import order mirrors shadcn's prettier importOrder: react, then
+  // third-party, blank line, then the @/ groups in shadcn's sequence, blank
+  // line, then relative paths.
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [
+              ["react", "react/**"],
+              [":BUN:", ":NODE:", ":PACKAGE:", ":PACKAGE_WITH_PROTOCOL:"],
+              ":BLANK_LINE:",
+              "@/types/**",
+              "@/config/**",
+              "@/lib/**",
+              "@/hooks/**",
+              "@/components/ui/**",
+              "@/components/**",
+              "@/styles/**",
+              "@/app/**",
+              ":BLANK_LINE:",
+              ":PATH:"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "overrides": [
+    {
+      // Vendored shadcn primitives stay as upstream ships them. Sanctioned
+      // exceptions (owner sign-off 2026-07-02), scoped to this directory
+      // only: the component-export rule (upstream `Component + xxxVariants`
+      // export pairs), the label-association rule (the generic <Label>
+      // wrapper takes htmlFor/children via props), and import re-sorting.
+      // Everything else lints at full strength.
+      "includes": ["web/src/components/ui/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noLabelWithoutControl": "off"
+          },
+          "style": {
+            "useComponentExportOnlyModules": "off"
+          }
+        }
+      },
+      "assist": {
+        "actions": {
+          "source": {
+            "organizeImports": "off"
+          }
+        }
+      }
+    }
+  ]
+}
