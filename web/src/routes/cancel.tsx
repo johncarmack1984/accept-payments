@@ -1,11 +1,11 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { XCircle } from 'lucide-react'
+import { createFileRoute, Link } from "@tanstack/react-router"
+import { XCircle } from "lucide-react"
 
-import { buttonVariants } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
+import { cn } from "@/lib/utils"
+import { buttonVariants } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 
-export const Route = createFileRoute('/cancel')({
+export const Route = createFileRoute("/cancel")({
   component: CancelPage,
 })
 
@@ -23,7 +23,7 @@ function CancelPage() {
           <p className="text-balance text-sm text-muted-foreground">
             No payment was taken. Head back whenever you're ready to try again.
           </p>
-          <Link to="/" className={cn(buttonVariants({ variant: 'outline' }))}>
+          <Link to="/" className={cn(buttonVariants({ variant: "outline" }))}>
             Back to home
           </Link>
         </CardContent>

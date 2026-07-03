@@ -1,19 +1,19 @@
-import type { ComponentType } from 'react'
-import { CheckCircle2, Clock3, TriangleAlert } from 'lucide-react'
+import type { ComponentType } from "react"
+import { CheckCircle2, Clock3, TriangleAlert } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/utils'
-import { formatAmount, type PaymentStatus, type SessionStatus } from '@/lib/api'
+import { formatAmount, type PaymentStatus, type SessionStatus } from "@/lib/api"
+import { cn } from "@/lib/utils"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type Variant = {
   icon: ComponentType<{ className?: string }>
   iconClass: string
   heading: string
   badge: string
-  badgeVariant: 'default' | 'secondary'
+  badgeVariant: "default" | "secondary"
   message: string
 }
 
@@ -22,35 +22,36 @@ const VARIANTS: Record<PaymentStatus, Variant> = {
   paid: {
     icon: CheckCircle2,
     iconClass:
-      'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400',
-    heading: 'Payment received',
-    badge: 'Paid',
-    badgeVariant: 'default',
-    message: 'Thank you — your payment is complete.',
+      "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+    heading: "Payment received",
+    badge: "Paid",
+    badgeVariant: "default",
+    message: "Thank you — your payment is complete.",
   },
   // ACH debits land unpaid and settle days later.
   unpaid: {
     icon: Clock3,
     iconClass:
-      'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400',
-    heading: 'Payment processing',
-    badge: 'Processing',
-    badgeVariant: 'secondary',
+      "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
+    heading: "Payment processing",
+    badge: "Processing",
+    badgeVariant: "secondary",
     message:
-      'Your bank transfer has been initiated. ACH payments take 1–3 business days to settle.',
+      "Your bank transfer has been initiated. ACH payments take 1–3 business days to settle.",
   },
   no_payment_required: {
     icon: CheckCircle2,
-    iconClass: 'bg-muted text-muted-foreground',
-    heading: 'All set',
-    badge: 'Complete',
-    badgeVariant: 'secondary',
-    message: 'No payment was required.',
+    iconClass: "bg-muted text-muted-foreground",
+    heading: "All set",
+    badge: "Complete",
+    badgeVariant: "secondary",
+    message: "No payment was required.",
   },
 }
 
 export function Receipt({ session }: { session: SessionStatus }) {
-  const variant = VARIANTS[session.payment_status] ?? VARIANTS.no_payment_required
+  const variant =
+    VARIANTS[session.payment_status] ?? VARIANTS.no_payment_required
   const Icon = variant.icon
   const amount = formatAmount(session.amount_total, session.currency)
 
@@ -59,8 +60,8 @@ export function Receipt({ session }: { session: SessionStatus }) {
       <CardContent className="flex flex-col items-center gap-4 px-8 py-4 text-center">
         <div
           className={cn(
-            'flex size-16 items-center justify-center rounded-full',
-            variant.iconClass,
+            "flex size-16 items-center justify-center rounded-full",
+            variant.iconClass
           )}
         >
           <Icon className="size-8" />

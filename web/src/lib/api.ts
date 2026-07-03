@@ -1,4 +1,4 @@
-export type PaymentStatus = 'paid' | 'unpaid' | 'no_payment_required'
+export type PaymentStatus = "paid" | "unpaid" | "no_payment_required"
 
 // Mirrors the Lambda's GET /sessions/:id response (SessionStatus in src/main.rs).
 export interface SessionStatus {
@@ -10,7 +10,7 @@ export interface SessionStatus {
 
 export function isPaymentStatus(value: unknown): value is PaymentStatus {
   return (
-    value === 'paid' || value === 'unpaid' || value === 'no_payment_required'
+    value === "paid" || value === "unpaid" || value === "no_payment_required"
   )
 }
 
@@ -23,26 +23,26 @@ export async function fetchSession(sessionId: string): Promise<SessionStatus> {
 }
 
 export function money(cents: number, currency: string | null): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: (currency ?? 'usd').toUpperCase(),
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: (currency ?? "usd").toUpperCase(),
   }).format(cents / 100)
 }
 
 export function formatAmount(
   amountTotal: number | null,
-  currency: string | null,
+  currency: string | null
 ): string | null {
   return amountTotal == null ? null : money(amountTotal, currency)
 }
 
 export function formatDate(unixSeconds: number): string {
-  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(
-    new Date(unixSeconds * 1000),
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(
+    new Date(unixSeconds * 1000)
   )
 }
 
-export type InvoiceStatus = 'open' | 'paid' | 'void'
+export type InvoiceStatus = "open" | "paid" | "void"
 
 export interface InvoiceLineItem {
   description: string
@@ -79,8 +79,8 @@ export async function fetchInvoice(token: string): Promise<PublicInvoice> {
 // thrown when the session is missing or rejected, so the UI can show the gate
 export class AuthError extends Error {
   constructor() {
-    super('Not signed in')
-    this.name = 'AuthError'
+    super("Not signed in")
+    this.name = "AuthError"
   }
 }
 
@@ -114,7 +114,7 @@ export interface NewInvoiceBody {
 export function lineItemsTotal(items: InvoiceLineItem[]): number {
   return items.reduce(
     (sum, item) => sum + item.quantity * item.unit_amount_cents,
-    0,
+    0
   )
 }
 
@@ -123,7 +123,7 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, {
     ...init,
     headers: {
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
+      ...(init?.body ? { "content-type": "application/json" } : {}),
       ...init?.headers,
     },
   })
@@ -135,22 +135,25 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 export async function listInvoices(): Promise<Invoice[]> {
-  return (await adminFetch('/invoices')).json()
+  return (await adminFetch("/invoices")).json()
 }
 
 export async function createInvoice(body: NewInvoiceBody): Promise<Invoice> {
   return (
-    await adminFetch('/invoices', { method: 'POST', body: JSON.stringify(body) })
+    await adminFetch("/invoices", {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
   ).json()
 }
 
 export async function setInvoiceStatus(
   id: string,
-  status: InvoiceStatus,
+  status: InvoiceStatus
 ): Promise<Invoice> {
   return (
     await adminFetch(`/invoices/${id}`, {
-      method: 'PATCH',
+      method: "PATCH",
       body: JSON.stringify({ status }),
     })
   ).json()
@@ -163,13 +166,13 @@ export interface Settings {
 }
 
 export async function fetchSettings(): Promise<Settings> {
-  return (await adminFetch('/settings')).json()
+  return (await adminFetch("/settings")).json()
 }
 
 export async function saveSettings(settings: Settings): Promise<Settings> {
   return (
-    await adminFetch('/settings', {
-      method: 'PUT',
+    await adminFetch("/settings", {
+      method: "PUT",
       body: JSON.stringify(settings),
     })
   ).json()
@@ -180,9 +183,9 @@ export interface Me {
 }
 
 export async function fetchMe(): Promise<Me> {
-  return (await adminFetch('/auth/me')).json()
+  return (await adminFetch("/auth/me")).json()
 }
 
 export async function logout(): Promise<void> {
-  await fetch('/auth/logout', { method: 'POST' })
+  await fetch("/auth/logout", { method: "POST" })
 }

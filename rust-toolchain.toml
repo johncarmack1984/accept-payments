@@ -1,3 +1,8 @@
+# Deliberately pinned to a nightly: CI and local must build the exact same
+# toolchain or the cargo-lambda/zig ARM64 link of the crc64fast-nvme cdylib
+# breaks, and a stable migration is untested here. The workflow's
+# dtolnay/rust-toolchain step exports RUSTUP_TOOLCHAIN, which OVERRIDES this
+# file in CI — bump the pin in both places together, never one.
 [toolchain]
 channel = "nightly-2026-05-15"
 profile = "minimal"
