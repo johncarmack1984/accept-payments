@@ -631,7 +631,12 @@ fn recordable(event_type: &EventType, payment_status: &CheckoutSessionPaymentSta
     ) && *payment_status == CheckoutSessionPaymentStatus::Paid
 }
 
-async fn list_payments(State(db): State<Db>) -> Result<Json<Vec<Payment>>, ServerError> {
+async fn list_payments(
+    headers: HeaderMap,
+    State(db): State<Db>,
+) -> Result<Json<Vec<Payment>>, ServerError> {
+    check_admin(&headers)?;
+
     let mut payments = Vec::new();
     let mut start_key = None;
 
