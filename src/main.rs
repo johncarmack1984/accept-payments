@@ -12,19 +12,18 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use lambda_http::{http::StatusCode, run, tracing, Error};
 use serde::{Deserialize, Serialize};
 use stripe::Client as StripeClient;
 use stripe_checkout::checkout_session::{
-    CreateCheckoutSession, CreateCheckoutSessionLineItems,
-    CreateCheckoutSessionLineItemsPriceData, CreateCheckoutSessionPaymentMethodTypes, ProductData,
-    RetrieveCheckoutSession,
+    CreateCheckoutSession, CreateCheckoutSessionLineItems, CreateCheckoutSessionLineItemsPriceData,
+    CreateCheckoutSessionPaymentMethodTypes, ProductData, RetrieveCheckoutSession,
 };
 use stripe_checkout::CheckoutSessionMode;
 use stripe_shared::{CheckoutSession, CheckoutSessionPaymentStatus};
 use stripe_types::Currency;
 use stripe_webhook::{EventObject, EventType, Webhook};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use uuid::Uuid;
 
 // Item id 0 is the atomic counter that hands out sequential post ids. It
@@ -319,7 +318,7 @@ impl Db {
 
             invoices.extend(page.items().iter().filter_map(item_to_invoice));
 
-            start_key = page.last_evaluated_key().map(|key| key.clone());
+            start_key = page.last_evaluated_key().cloned();
             if start_key.is_none() {
                 break;
             }
@@ -417,7 +416,7 @@ async fn list_posts(State(db): State<Db>) -> Result<Json<Vec<Post>>, ServerError
 
         posts.extend(page.items().iter().filter_map(item_to_post));
 
-        start_key = page.last_evaluated_key().map(|key| key.clone());
+        start_key = page.last_evaluated_key().cloned();
         if start_key.is_none() {
             break;
         }
@@ -565,7 +564,10 @@ async fn get_session(
         id: session.id.to_string(),
         payment_status: payment_status_str(&session.payment_status),
         amount_total: session.amount_total,
-        currency: session.currency.as_ref().map(|currency| currency.to_string()),
+        currency: session
+            .currency
+            .as_ref()
+            .map(|currency| currency.to_string()),
     }))
 }
 
@@ -652,7 +654,7 @@ async fn list_payments(
 
         payments.extend(page.items().iter().filter_map(item_to_payment));
 
-        start_key = page.last_evaluated_key().map(|key| key.clone());
+        start_key = page.last_evaluated_key().cloned();
         if start_key.is_none() {
             break;
         }
@@ -940,7 +942,10 @@ async fn create_invoice(
     check_admin(&headers)?;
 
     if new.client_name.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "client_name is required".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "client_name is required".to_string(),
+        ));
     }
     validate_line_items(&new.line_items)?;
 
@@ -1261,7 +1266,10 @@ mod tests {
 
     #[test]
     fn payment_status_maps_to_stable_strings() {
-        assert_eq!(payment_status_str(&CheckoutSessionPaymentStatus::Paid), "paid");
+        assert_eq!(
+            payment_status_str(&CheckoutSessionPaymentStatus::Paid),
+            "paid"
+        );
         assert_eq!(
             payment_status_str(&CheckoutSessionPaymentStatus::Unpaid),
             "unpaid"
@@ -1324,7 +1332,10 @@ mod tests {
     fn invoice_counter_item_is_not_an_invoice() {
         let counter = HashMap::from([
             ("id".to_string(), AttributeValue::S("counter".to_string())),
-            ("next_number".to_string(), AttributeValue::N("8".to_string())),
+            (
+                "next_number".to_string(),
+                AttributeValue::N("8".to_string()),
+            ),
         ]);
         assert!(item_to_invoice(&counter).is_none());
     }
