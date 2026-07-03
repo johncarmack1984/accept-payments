@@ -1,11 +1,11 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { CreditCard, Landmark } from 'lucide-react'
+import { createFileRoute, Link } from "@tanstack/react-router"
+import { CreditCard, Landmark } from "lucide-react"
 
-import { Badge } from '@/components/ui/badge'
-import { buttonVariants } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import { buttonVariants } from "@/components/ui/button"
 
-export const Route = createFileRoute('/')({
+export const Route = createFileRoute("/")({
   component: Home,
 })
 
@@ -35,37 +35,37 @@ function Home() {
           <div className="flex flex-wrap justify-center gap-2 pt-2">
             <Link
               to="/success"
-              search={{ session_id: '', demo: 'paid' }}
-              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+              search={{ session_id: "", demo: "paid" }}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             >
               Receipt · paid
             </Link>
             <Link
               to="/success"
-              search={{ session_id: '', demo: 'unpaid' }}
-              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+              search={{ session_id: "", demo: "unpaid" }}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             >
               Receipt · ACH
             </Link>
             <Link
               to="/cancel"
-              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             >
               Cancel
             </Link>
             <Link
               to="/i/$token"
-              params={{ token: 'demo' }}
-              search={{ demo: 'open' }}
-              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+              params={{ token: "demo" }}
+              search={{ demo: "open" }}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             >
               Invoice
             </Link>
             <Link
               to="/i/$token"
-              params={{ token: 'demo' }}
-              search={{ demo: 'paid' }}
-              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+              params={{ token: "demo" }}
+              search={{ demo: "paid" }}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             >
               Invoice · paid
             </Link>
