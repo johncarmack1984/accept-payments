@@ -8,6 +8,13 @@ resource "aws_dynamodb_table" "posts" {
   write_capacity = 5
   hash_key       = "id"
 
+  # Inventory tags applied by the manifest cost dashboard; declared here so
+  # terraform doesn't strip them on apply.
+  tags = {
+    app                 = "accept-payments"
+    "manifest:category" = "app"
+  }
+
   attribute {
     name = "id"
     type = "N"
@@ -23,9 +30,22 @@ resource "aws_dynamodb_table" "payments" {
   write_capacity = 5
   hash_key       = "event_id"
 
+  # Inventory tags applied by the manifest cost dashboard; declared here so
+  # terraform doesn't strip them on apply.
+  tags = {
+    app                 = "accept-payments"
+    "manifest:category" = "app"
+  }
+
   attribute {
     name = "event_id"
     type = "S"
+  }
+
+  # Continuous backups on the financial record. PITR is outside the free tier
+  # but bills per GB-month of table data — this table is KB-scale, so ~$0.
+  point_in_time_recovery {
+    enabled = true
   }
 }
 
@@ -39,9 +59,21 @@ resource "aws_dynamodb_table" "invoices" {
   write_capacity = 5
   hash_key       = "id"
 
+  # Inventory tags applied by the manifest cost dashboard; declared here so
+  # terraform doesn't strip them on apply.
+  tags = {
+    app                 = "accept-payments"
+    "manifest:category" = "app"
+  }
+
   attribute {
     name = "id"
     type = "S"
+  }
+
+  # Same rationale as the payments table: financial record, KB-scale, ~$0.
+  point_in_time_recovery {
+    enabled = true
   }
 }
 
