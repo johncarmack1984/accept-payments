@@ -1,0 +1,19 @@
+# Keeps the SHA-pinned actions current (bumps the pin + version comment in one
+# grouped weekly PR) and batches cargo updates monthly. Merging a cargo PR
+# redeploys the Lambda via the path filter — that's intended for dep bumps.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]
