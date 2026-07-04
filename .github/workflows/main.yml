@@ -89,3 +89,20 @@ jobs:
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+
+      # Drift gate: PITR on the financial tables is declared in
+      # infra/storage.tf; fail the deploy if the live tables ever disagree
+      # (e.g. a console toggle), so backup posture can't rot silently.
+      - name: Verify PITR on the financial tables
+        run: |
+          set -euo pipefail
+          for t in accept-payments-payments accept-payments-invoices; do
+            status=$(aws dynamodb describe-continuous-backups --table-name "$t" \
+              --query 'ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus' \
+              --output text)
+            if [ "$status" != "ENABLED" ]; then
+              echo "::error::PITR is $status on $t — must be ENABLED (declared in infra/storage.tf)"
+              exit 1
+            fi
+            echo "$t: PITR $status"
+          done

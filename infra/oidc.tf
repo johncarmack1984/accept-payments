@@ -66,6 +66,16 @@ resource "aws_iam_role_policy" "github_deploy" {
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
         Resource = [aws_iam_role.cargo-lambda-role.arn]
+      },
+      {
+        # The deploy's drift gate reads live PITR status on the financial
+        # tables and fails if it disagrees with storage.tf. Read-only.
+        Effect   = "Allow"
+        Action   = ["dynamodb:DescribeContinuousBackups"]
+        Resource = [
+          aws_dynamodb_table.payments.arn,
+          aws_dynamodb_table.invoices.arn,
+        ]
       }
     ]
   })
