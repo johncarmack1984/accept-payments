@@ -22,12 +22,12 @@ aws-sdk-dynamodb = { version = "1", default-features = false, features = ["defau
 axum = "0.8"
 lambda_http = "1"
 lambda_runtime = "1"
-serde = "1.0.196"
+serde = "1.0.228"
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros"] }
 uuid = { version = "1", features = ["v4"] }
 # GitHub OAuth: reqwest calls the GitHub API; jsonwebtoken signs the session cookie
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form"] }
 # v10 requires picking a crypto provider; rust_crypto is pure-Rust (HS256 only,
 # via from_secret) and avoids aws-lc-sys's C build under the zig cross-linker.
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
