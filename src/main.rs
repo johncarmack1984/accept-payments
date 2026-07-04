@@ -3,9 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use axum::{
-    extract::{Host, Path, Query, State},
+    extract::{Path, Query, State},
     http::{
-        header::{COOKIE, LOCATION, SET_COOKIE},
+        header::{COOKIE, HOST, LOCATION, SET_COOKIE},
         HeaderMap, HeaderValue,
     },
     response::{IntoResponse, Json, Response},
@@ -151,6 +151,19 @@ struct Settings {
 }
 
 type ServerError = (StatusCode, String);
+
+// The request host, read ONLY from the `Host` header. The axum 0.7 extractor
+// (deprecated upstream in 0.8, axum#3442) preferred `X-Forwarded-Host`, which
+// nothing trusted sets in front of the Function URL — any caller could spoof
+// the origin baked into Stripe receipt URLs and OAuth redirects. The Function
+// URL always supplies the real `Host`.
+fn request_host(headers: &HeaderMap) -> Result<String, ServerError> {
+    headers
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .ok_or((StatusCode::BAD_REQUEST, "missing Host header".to_string()))
+}
 
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|value| !value.is_empty())
@@ -476,9 +489,10 @@ fn item_to_payment(item: &HashMap<String, AttributeValue>) -> Option<Payment> {
 
 async fn create_checkout(
     State(db): State<Db>,
-    Host(host): Host,
+    headers: HeaderMap,
     Json(checkout): Json<NewCheckout>,
 ) -> Result<Json<CheckoutCreated>, ServerError> {
+    let host = request_host(&headers)?;
     let stripe = db.stripe.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
         "payments are not configured".to_string(),
@@ -777,7 +791,11 @@ async fn auth_me(headers: HeaderMap) -> Response {
 
 // Start the OAuth dance: redirect to GitHub with a CSRF state stashed in a
 // short-lived cookie.
-async fn auth_login(Host(host): Host) -> Response {
+async fn auth_login(headers: HeaderMap) -> Response {
+    let host = match request_host(&headers) {
+        Ok(host) => host,
+        Err(err) => return err.into_response(),
+    };
     let Some(client_id) = env_nonempty("OAUTH_CLIENT_ID") else {
         return (StatusCode::SERVICE_UNAVAILABLE, "auth is not configured").into_response();
     };
@@ -815,11 +833,11 @@ struct CallbackQuery {
 
 // GitHub redirects back here; verify state, exchange the code, and — if the
 // login is the admin — set the session cookie.
-async fn auth_callback(
-    headers: HeaderMap,
-    Host(host): Host,
-    Query(query): Query<CallbackQuery>,
-) -> Response {
+async fn auth_callback(headers: HeaderMap, Query(query): Query<CallbackQuery>) -> Response {
+    let host = match request_host(&headers) {
+        Ok(host) => host,
+        Err(err) => return err.into_response(),
+    };
     let state_ok =
         !query.state.is_empty() && cookie(&headers, STATE_COOKIE) == Some(query.state.as_str());
     if !state_ok {
@@ -1106,16 +1124,16 @@ async fn main() -> Result<(), Error> {
     // Set up the API routes
     let posts_api = Router::new()
         .route("/", get(list_posts).post(create_post))
-        .route("/:id", get(get_post).delete(delete_post));
+        .route("/{id}", get(get_post).delete(delete_post));
     let app = Router::new()
         .nest("/posts", posts_api)
         .route("/checkout", post(create_checkout))
-        .route("/sessions/:id", get(get_session))
+        .route("/sessions/{id}", get(get_session))
         .route("/payments", get(list_payments))
         .route("/webhooks/stripe", post(stripe_webhook))
         .route("/invoices", post(create_invoice).get(list_invoices))
-        .route("/invoices/:id", get(get_invoice).patch(update_invoice))
-        .route("/invoice/:token", get(public_invoice))
+        .route("/invoices/{id}", get(get_invoice).patch(update_invoice))
+        .route("/invoice/{token}", get(public_invoice))
         .route("/settings", get(get_settings).put(update_settings))
         .route("/auth/github/login", get(auth_login))
         .route("/auth/github/callback", get(auth_callback))
