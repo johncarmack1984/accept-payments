@@ -20,6 +20,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Uncommon pinned port; strict so a taken port fails loudly instead of
+    // silently shifting.
+    port: 47305,
+    strictPort: true,
     proxy: {
       // The SPA calls /sessions/:id same-origin; in dev, forward it to the Rust
       // Lambda (cargo lambda watch, or API_PROXY_TARGET). In production the

@@ -8,7 +8,7 @@ Frontend for accept-payments — a Vite + React + TypeScript SPA using
 
 ```bash
 bun install
-bun dev            # http://localhost:5173
+bun dev            # http://localhost:47305
 ```
 
 The receipt route is `/success?session_id=<id>` — Stripe Checkout's
