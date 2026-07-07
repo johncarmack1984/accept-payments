@@ -56,7 +56,7 @@ jobs:
         working-directory: web
       - run: bun run build
         working-directory: web
-      - run: pip3 install cargo-lambda
+      - run: pip3 install cargo-lambda==1.9.1
       - run: cargo lambda build --release --arm64 --features embed-web
 
       # Short-lived credentials via GitHub OIDC: the role trusts only pushes
