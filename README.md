@@ -62,7 +62,7 @@ The API needs AWS credentials (DynamoDB) and, for live payments, Stripe keys:
 
 ```sh
 cargo lambda watch                 # API, local
-cd web && bun install && bun dev   # SPA at http://localhost:5173
+cd web && bun install && bun dev   # SPA at http://localhost:47305
 ```
 
 Without `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` the payment routes return

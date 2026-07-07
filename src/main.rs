@@ -177,7 +177,7 @@ struct Db {
     // None until the Stripe secrets are configured; payment routes 503 cleanly
     stripe: Option<StripeClient>,
     webhook_secret: Option<String>,
-    // origin of the SPA (e.g. http://localhost:5173); checkout redirect URLs
+    // origin of the SPA (e.g. http://localhost:47305); checkout redirect URLs
     // point here, falling back to the request host when unset
     web_origin: Option<String>,
     invoices_table: String,
