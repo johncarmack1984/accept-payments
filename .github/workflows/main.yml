@@ -38,7 +38,7 @@ jobs:
 
       # keep in sync with rust-toolchain.toml — this action's RUSTUP_TOOLCHAIN
       # env overrides the file, so an unpinned channel here is what actually builds
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master 2026-07-02
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master 2026-07-02
         with:
           toolchain: nightly-2026-05-15
           targets: aarch64-unknown-linux-gnu
