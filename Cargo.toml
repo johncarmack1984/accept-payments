@@ -12,7 +12,7 @@ edition = "2021"
 async-stripe = { version = "=1.0.0-rc.6", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-aws-lc-rs"] }
 async-stripe-checkout = { version = "=1.0.0-rc.6", features = ["checkout_session"] }
 async-stripe-shared = "=1.0.0-rc.6"
-async-stripe-types = "=1.0.0-rc.6"
+async-stripe-types = "=1.0.0-rc.8"
 async-stripe-webhook = { version = "=1.0.0-rc.6", features = ["async-stripe-checkout"] }
 # install aws-lc-rs as the process-default rustls CryptoProvider so async-stripe's
 # rustls 0.23 TLS resolves a provider unambiguously at runtime
